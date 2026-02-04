@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+pydantic
+python-multipart
+pyyaml
+jinja2
+sqlmodel
+bcrypt
+passlib
+python-dotenv
+markdown
+markdown-pdf
+pyjwt

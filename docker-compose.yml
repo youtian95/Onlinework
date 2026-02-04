@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: onlinework-backend
+    restart: always
+    volumes:
+      - ./backend/db:/app/backend/db
+      - ./backend/problems:/app/backend/problems
+      - ./backend/public:/app/backend/public
+      - ./backend/archive:/app/backend/archive
+      - ./.env.secret:/app/.env.secret
+    environment:
+      - TZ=Asia/Shanghai
+
+  frontend:
+    build:
+      context: frontend  # 构建上下文是 frontend 目录
+      dockerfile: Dockerfile
+    container_name: onlinework-frontend
+    restart: always
+    ports:
+      - "80:80"  # 将容器的 80 端口映射到宿主机的 80 端口 (如果冲突可以改左边，如 8080:80)
+    depends_on:
+      - backend
