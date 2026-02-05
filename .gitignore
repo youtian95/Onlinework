@@ -7,6 +7,10 @@ ENV/
 env.bak/
 venv.bak/
 
+# Allow frontend env config
+!frontend/.env
+!frontend/.env.production
+
 # Python
 __pycache__/
 *.py[cod]
