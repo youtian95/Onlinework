@@ -63,7 +63,7 @@ const loadingScores = ref(false)
 const loadingWork = ref(false)
 const loadingDB = ref(false)
 const loadingImport = ref(false)
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 const downloadScores = async () => {
     loadingScores.value = true

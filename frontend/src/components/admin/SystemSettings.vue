@@ -48,7 +48,7 @@ const props = defineProps({
     adminToken: String
 })
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 const courseName = ref('')
 const coverUrl = ref('')

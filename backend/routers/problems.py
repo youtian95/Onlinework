@@ -38,6 +38,7 @@ def get_current_student(
 ) -> Student:
     """Dependency to parse JWT and get current student"""
     if not authorization:
+        print("DEBUG: Missing Authorization Header")
         raise HTTPException(status_code=401, detail="Missing Authorization Header")
     
     # Support "Bearer <token>"
@@ -49,14 +50,21 @@ def get_current_student(
         
     payload = verify_token(token)
     if not payload:
+        print(f"DEBUG: Token verification failed. Token: {token[:10]}...")
         raise HTTPException(status_code=401, detail="Invalid Token")
         
     student_id = payload.get("sub")
     if not student_id:
+        print("DEBUG: No sub in payload")
         raise HTTPException(status_code=401, detail="Invalid Token Payload")
-        
+    
+    print(f"DEBUG: Looking for student {student_id}")
     student = session.exec(select(Student).where(Student.student_id == student_id)).first()
     if not student:
+        print(f"DEBUG: Student {student_id} not found in DB")
+        # 尝试列出所有学生以便调试
+        all_students = session.exec(select(Student)).all()
+        print(f"DEBUG: Existing students: {[s.student_id for s in all_students]}")
         raise HTTPException(status_code=401, detail="User not found")
         
     if not student.enabled:

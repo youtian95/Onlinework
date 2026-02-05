@@ -6,8 +6,9 @@ pyyaml
 jinja2
 sqlmodel
 bcrypt
-passlib
 python-dotenv
 markdown
 markdown-pdf
 pyjwt
+beautifulsoup4
+reportlab

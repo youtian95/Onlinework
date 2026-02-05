@@ -63,7 +63,7 @@ const rankingList = ref([])
 const loading = ref(true)
 const studentId = localStorage.getItem('studentId')
 const token = localStorage.getItem('studentToken')
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 const formatDate = (isoString) => {
     if (!isoString) return '-'

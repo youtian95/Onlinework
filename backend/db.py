@@ -1,10 +1,11 @@
 import os
 from sqlmodel import SQLModel, create_engine, Session
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+# 使用 db 目录存储数据库，以便持久化 (因为 docker-compose 挂载了 /app/backend/db)
+DATA_DIR = os.path.join(os.path.dirname(__file__), "db")
 DB_PATH = os.path.join(DATA_DIR, "app.db")
 
-# 确保 data 目录存在
+# 确保 db 目录存在
 os.makedirs(DATA_DIR, exist_ok=True)
 
 engine = create_engine(

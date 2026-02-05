@@ -34,7 +34,7 @@ import axios from 'axios'
 import { marked } from 'marked'
 import markedKatex from 'marked-katex-extension'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 // 引入 Katex 样式，实际项目中需要在 index.html 或全局 CSS 引入
 // 这里假设已经在 index.html 引入或者忽略样式问题先跑通功能

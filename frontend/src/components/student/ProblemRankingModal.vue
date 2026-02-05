@@ -51,7 +51,7 @@ const props = defineProps({
 
 const emit = defineEmits(['close'])
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 const rankingData = ref([])
 const loading = ref(true)
 

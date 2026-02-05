@@ -74,7 +74,7 @@ import axios from 'axios'
 import StudentNavbar from '../components/student/StudentNavbar.vue'
 import ProblemRankingModal from '../components/student/ProblemRankingModal.vue'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 const problems = ref([])
 const loading = ref(true)

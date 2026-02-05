@@ -106,6 +106,23 @@
 
 ### 本地调试项目
 
+- 克隆代码
+
+  ```bash
+  git clone
+  ```
+
+- 安装依赖
+
+    ```bash
+    conda create -p ./.env python=3.12 -y
+    conda activate ./.env
+    pip install -r backend/requirements.txt
+    cd frontend
+    npm install
+    cd .. 
+    ```
+
 - 启动前端
 
   ```bash
@@ -150,7 +167,7 @@ cd onlinework
 
 #### 3. 启动服务
 
-在项目目录下直接运行：
+在项目目录下直接运行（**如果服务器没有安装 Docker，需要先安装**）：
 
 ```bash
 docker-compose up -d --build

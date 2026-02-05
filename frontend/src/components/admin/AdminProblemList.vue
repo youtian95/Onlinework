@@ -146,7 +146,7 @@ const props = defineProps({
 
 const emit = defineEmits(['logout'])
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 // Problem Stats Data
 const adminProblems = ref([])
