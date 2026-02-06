@@ -394,7 +394,7 @@ def list_admin_problems(session: Session = Depends(get_session)):
             state = states_map.get(name)
             if not state:
                 state_dict = {
-                    "is_visible": True,
+                    "is_visible": False,
                     "deadline": None,
                     "is_deleted": False
                 }

@@ -12,6 +12,7 @@
         </div>
         <div class="user-info">
             <slot name="extra"></slot>
+            <button @click="router.push('/docs')" class="docs-btn">📘 说明文档</button>
             <span class="welcome" v-if="studentId">{{ studentId }}</span>
             <button @click="$emit('logout')" class="logout-btn">退出</button>
         </div>
@@ -19,6 +20,10 @@
 </template>
 
 <script setup>
+import { useRouter } from 'vue-router'
+
+const router = useRouter()
+
 defineProps({
     title: {
         type: String,
@@ -75,6 +80,22 @@ defineEmits(['logout', 'back'])
     font-size: 14px;
     color: #606266;
 }
+
+.docs-btn {
+    background: transparent;
+    border: none;
+    color: #606266;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 5px 10px;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+.docs-btn:hover {
+    background: #f0f2f5;
+    color: #409eff;
+}
+
 .logout-btn {
     border: 1px solid #dcdfe6;
     background: transparent;

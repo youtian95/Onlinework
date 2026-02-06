@@ -222,7 +222,7 @@ def get_total_ranking(session: Session):
         for name in os.listdir(PROBLEMS_DIR):
             # 过滤掉回收站或未发布的题目
             state = states_dict.get(name)
-            is_visible = state.is_visible if state else True
+            is_visible = state.is_visible if state else False
             is_deleted = state.is_deleted if state else False
 
             if is_deleted or not is_visible:

@@ -98,10 +98,8 @@ def list_problems(
         # 1. Check Visibility & Deletion
         state = states_dict.get(name)
         
-        # Default policy: Old problems (no state) are VISIBLE (True) to not break existing instances
-        # But newly uploaded ones are defaults to invisible in my Admin logic.
-        # Let's align: if no state record, treat as visible (legacy support).
-        is_visible = state.is_visible if state else True
+        # Default policy: problems without explicit state are UNPUBLISHED
+        is_visible = state.is_visible if state else False
         is_deleted = state.is_deleted if state else False
         
         if is_deleted or not is_visible:

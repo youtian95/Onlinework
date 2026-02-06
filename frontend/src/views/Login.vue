@@ -55,7 +55,9 @@
       </div>
 
       <div class="footer-links">
-        <span @click="router.push('/admin')" class="link-text">我是管理员</span>
+        <span @click="router.push('/docs')" class="link-text">📚 说明文档</span>
+        <span class="divider">|</span>
+        <span @click="router.push('/admin')" class="link-text">后台管理</span>
         <span v-if="setupRequired" @click="resetSetupState" class="link-text" style="margin-left: 15px;">返回登录</span>
       </div>
     </div>
@@ -317,6 +319,10 @@ onMounted(() => {
 .link-text:hover {
     color: #42b983;
     text-decoration: underline;
+}
+.divider {
+    margin: 0 10px;
+    color: #e0e0e0;
 }
 
 .fade-enter-active,
