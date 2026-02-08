@@ -28,6 +28,7 @@ class ProblemStateUpdate(BaseModel):
     is_visible: Optional[bool] = None
     deadline: Optional[datetime] = None
     is_deleted: Optional[bool] = None
+    is_public_view: Optional[bool] = None
 
 class StudentUpdate(BaseModel):
     is_test: Optional[bool] = None
@@ -396,7 +397,8 @@ def list_admin_problems(session: Session = Depends(get_session)):
                 state_dict = {
                     "is_visible": False,
                     "deadline": None,
-                    "is_deleted": False
+                    "is_deleted": False,
+                    "is_public_view": False
                 }
             else:
                 # Ensure deadline is timezone aware (UTC) if it's naive
@@ -407,7 +409,8 @@ def list_admin_problems(session: Session = Depends(get_session)):
                 state_dict = {
                     "is_visible": state.is_visible,
                     "deadline": deadline,
-                    "is_deleted": state.is_deleted
+                    "is_deleted": state.is_deleted,
+                    "is_public_view": state.is_public_view
                 }
 
             problems.append({

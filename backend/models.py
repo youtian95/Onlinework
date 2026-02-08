@@ -33,6 +33,7 @@ class ProblemState(SQLModel, table=True):
     
     # Lifecycle
     is_visible: bool = Field(default=False)   # Published vs Draft
+    is_public_view: bool = Field(default=False) # Guest view allowed
     deadline: Optional[datetime] = None       # Auto termination time
     is_deleted: bool = Field(default=False)   # Recycle bin
     

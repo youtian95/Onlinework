@@ -40,6 +40,9 @@ def load_problem_script(problem_id: str):
     return module
 
 def require_student(session: Session, student_id: str) -> Student:
+    if not student_id:
+         raise HTTPException(status_code=401, detail="Authentication required")
+         
     student = session.exec(
         select(Student).where(Student.student_id == student_id)
     ).first()
@@ -57,17 +60,23 @@ def build_attempt_status(
     status = {}
     for input_id in input_ids:
         max_attempts = meta_inputs.get(input_id, {}).get("max_attempts", 1)
-        # 查找尝试记录
-        attempt = session.exec(
-            select(Attempt).where(
-                Attempt.student_id == student_id,
-                Attempt.problem_id == problem_id,
-                Attempt.input_id == input_id,
-            )
-        ).first()
+        
+        attempts = 0
+        correct = False
+        
+        # Only query DB if we have a student_id
+        if student_id:
+            attempt = session.exec(
+                select(Attempt).where(
+                    Attempt.student_id == student_id,
+                    Attempt.problem_id == problem_id,
+                    Attempt.input_id == input_id,
+                )
+            ).first()
+            if attempt:
+                attempts = attempt.attempts
+                correct = attempt.correct
 
-        attempts = attempt.attempts if attempt else 0
-        correct = attempt.correct if attempt else False
         remaining = 0 if correct else max(0, max_attempts - attempts)
         locked = (not correct) and attempts >= max_attempts
 
@@ -80,16 +89,22 @@ def build_attempt_status(
         }
     return status
 
-def get_problem_content_and_status(session: Session, problem_id: str, student_id: str):
+def get_problem_content_and_status(session: Session, problem_id: str, student_id: str = None):
     # 验证题目是否存在
     script = load_problem_script(problem_id)
     if not script:
         raise HTTPException(status_code=404, detail="Problem not found")
 
-    require_student(session, student_id)
+    if student_id:
+        require_student(session, student_id)
     
     # 1. 生成随机数生成器 (RNG)
-    rng = get_stable_rng(f"{student_id}_{problem_id}")
+    if student_id:
+        seed = f"{student_id}_{problem_id}"
+    else:
+        seed = f"public_{problem_id}" # Fixed seed for guests
+        
+    rng = get_stable_rng(seed)
 
     # 2. 从脚本生成参数
     params = script.generate(rng)

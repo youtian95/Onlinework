@@ -167,23 +167,19 @@ cd onlinework
 
 #### 3. 启动服务
 
-在项目目录下直接运行（**如果服务器没有安装 Docker，需要先安装**）：
+- 在1panel的容器编排中选择文件 `/opt/onlinework/docker-compose.yml`，就会自动部署。
+- 直接访问 `http://服务器IP:5050`已经可以看到系统，后面添加域名和 HTTPS。
+- 在阿里云中添加域名解析`njtechsteel.youtian95.cn`，指向服务器 IP。
+- 在1panel中添加网站，反向代理到 `http://localhost:5050`。
+- 使用 1Panel 的 SSL 功能为该网站申请免费的 HTTPS 证书。
+- 网站开启 HTTPS，选择上一步的证书。
 
-```bash
-docker-compose up -d --build
-```
-
-#### 4. 访问
-
-直接访问 `http://服务器IP:8080`（默认 8080 端口）即可看到系统。
-前端 Nginx 已经配置好了转发规则，所有 API 请求会自动转发给后端容器。
-
-#### 5. 后续更新
+#### 4. 后续更新
 
 当你有新代码提交到 GitHub 后，在服务器上更新：
 
 ```bash
-# 1. 拉取最新代码
+# 1. 拉取最新代码（或者手动上传到服务器）
 git pull
 
 # 2. 重新构建并重启 (数据不会丢失)

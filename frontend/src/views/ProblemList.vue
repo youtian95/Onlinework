@@ -11,7 +11,8 @@
             <div class="card-header">
                 <h2>我的作业列表</h2>
                 <div class="header-actions">
-                    <button class="rank-btn-main" @click="router.push('/ranking')">🏆 总成绩排名</button>
+                    <button v-if="studentId" class="rank-btn-main" @click="router.push('/ranking')">🏆 总成绩排名</button>
+                    <button v-else class="rank-btn-main" @click="router.push('/')">🔑 登录</button>
                     <span class="count" v-if="!loading">共 {{ problems.length }} 个任务</span>
                 </div>
             </div>
@@ -46,8 +47,10 @@
                         </div>
                     </div>
                     <div class="problem-action">
-                         <span class="rank-btn" @click.stop="viewRanking(problem)">🏆 排名</span>
-                        <span class="action-text">{{ problem.is_terminated ? '查看内容' : '开始作答' }}</span>
+                         <span class="rank-btn" v-if="studentId" @click.stop="viewRanking(problem)">🏆 排名</span>
+                        <span class="action-text">
+                            {{ studentId ? (problem.is_terminated ? '查看内容' : '开始作答') : '浏览内容' }}
+                        </span>
                         <span class="arrow">→</span>
                     </div>
                 </li>
@@ -97,23 +100,27 @@ const closeRankingModal = () => {
 }
 
 onMounted(async () => {
-    if (!token) {
-        router.push('/')
-        return
-    }
+    // Guest mode supported: don't redirect if no token
+    
     try {
-        // 不需要 check 接口，直接获取问题列表，后端会验证 Token
-        const res = await axios.get(`${API_BASE_URL}/problems`, {
-            headers: { Authorization: `Bearer ${token}` }
-        })
+        const config = {}
+        if (token) {
+            config.headers = { Authorization: `Bearer ${token}` }
+        }
+        
+        const res = await axios.get(`${API_BASE_URL}/problems`, config)
         problems.value = res.data
     } catch (e) {
         if (e.response && e.response.status === 401) {
-            alert('登录已过期')
+            // Token expired or invalid
             localStorage.removeItem('studentToken')
+            // Don't force redirect, just load as guest next time or now?
+            // Ideally, we should maybe retry without token, or just redirect to login if session died unexpectedly.
+            alert('登录已过期，请重新登录')
             router.push('/')
         } else {
-             // alert('该学号未被授权进入系统')
+             // alert('Error loading')
+             console.error(e)
         }
     } finally {
         loading.value = false

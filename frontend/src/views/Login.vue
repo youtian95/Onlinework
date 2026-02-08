@@ -48,6 +48,10 @@
              <span v-if="loading">处理中...</span>
              <span v-else>{{ setupRequired ? '确认设置并登录' : '登录' }}</span>
           </button>
+          
+          <div style="text-align: center; margin-top: 15px;">
+              <span @click="enterAsGuest" class="guest-link">👁️ 以游客身份浏览</span>
+          </div>
       </div>
 
       <div v-if="errorMessage" class="error-msg">
@@ -56,6 +60,8 @@
 
       <div class="footer-links">
         <span @click="router.push('/docs')" class="link-text">📚 说明文档</span>
+        <span class="divider">|</span>
+        <a href="https://github.com/youtian95/onlinework" target="_blank" class="link-text github-footer-link">GitHub 源码</a>
         <span class="divider">|</span>
         <span @click="router.push('/admin')" class="link-text">后台管理</span>
         <span v-if="setupRequired" @click="resetSetupState" class="link-text" style="margin-left: 15px;">返回登录</span>
@@ -81,6 +87,13 @@ const password = ref('')
 const confirmPassword = ref('')
 const setupRequired = ref(false)
 const confirmPwdInput = ref(null)
+
+const enterAsGuest = () => {
+    localStorage.removeItem('studentToken')
+    localStorage.removeItem('studentId')
+    localStorage.removeItem('studentName')
+    router.push('/problems')
+}
 
 const resetSetupState = () => {
     setupRequired.value = false
@@ -334,4 +347,23 @@ onMounted(() => {
 .fade-leave-to {
   opacity: 0;
 }
+.guest-link { 
+    display: inline-block;
+    cursor: pointer; 
+    color: #606266; 
+    font-size: 14px; 
+    transition: all 0.3s; 
+    padding: 8px 20px;
+    border-radius: 4px;
+    margin-top: 5px;
+}
+
+.guest-link:hover { 
+    color: #409EFF; 
+    background-color: #ecf5ff;
+    text-decoration: none;
+}
+
+.github-footer-link { text-decoration: none; }
+.github-footer-link:hover { text-decoration: underline; }
 </style>

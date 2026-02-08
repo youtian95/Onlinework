@@ -18,6 +18,7 @@
                         <th width="120">题目ID</th>
                         <th>标题</th>
                         <th width="100">状态</th>
+                        <th width="80">游客</th>
                         <th width="160">截止时间</th>
                         <th width="280">操作</th>
                     </tr>
@@ -31,6 +32,17 @@
                             <span v-else-if="!p.is_visible" class="status-badge status-draft">草稿</span>
                             <span v-else-if="isTerminated(p)" class="status-badge status-terminated">已截止</span>
                             <span v-else class="status-badge status-published">已发布</span>
+                        </td>
+                        <td>
+                             <label class="toggle-switch" v-if="!p.is_deleted">
+                                <input 
+                                    type="checkbox" 
+                                    :checked="p.is_public_view" 
+                                    @change="toggleGuest(p)"
+                                >
+                                <span class="slider round"></span>
+                            </label>
+                            <span v-else>-</span>
                         </td>
                         <td>
                             <span v-if="p.deadline" class="deadline-text">{{ formatTime(p.deadline) }}</span>
@@ -179,8 +191,15 @@ const updateProblemState = async (problem, updates) => {
             updates,
             { headers: { 'X-Admin-Token': props.adminToken } }
         )
-        // Merge result
-        Object.assign(problem, res.data)
+        // Merge result safely, preserving id (string) and title
+        const newState = res.data
+        problem.is_visible = newState.is_visible
+        problem.is_deleted = newState.is_deleted
+        problem.is_public_view = newState.is_public_view
+        problem.deadline = newState.deadline
+        // problem.id and problem.title are kept as is from the original list
+        // because response id is database int id, and title might be null
+
     } catch (e) {
         if(e.response && e.response.status === 401) emit('logout')
         else alert('操作失败')
@@ -189,6 +208,10 @@ const updateProblemState = async (problem, updates) => {
 
 const togglePublish = (p) => {
     updateProblemState(p, { is_visible: !p.is_visible })
+}
+
+const toggleGuest = (p) => {
+    updateProblemState(p, { is_public_view: !p.is_public_view })
 }
 
 const manualTerminate = (p) => {
@@ -500,3 +523,10 @@ tr:hover {
 .score-cell { font-weight: bold; color: #67c23a; font-family: monospace; }
 .time-cell { font-size: 12px; color: #999; }
 </style>
+
+.toggle-switch { position: relative; display: inline-block; width: 40px; height: 20px; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px; }
+.slider:before { position: absolute; content: ''; height: 16px; width: 16px; left: 2px; bottom: 2px; background-color: white; transition: .4s; border-radius: 50%; }
+input:checked + .slider { background-color: #2196F3; }
+input:checked + .slider:before { transform: translateX(20px); }

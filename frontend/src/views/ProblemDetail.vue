@@ -3,8 +3,8 @@
     <div class="nav-bar">
         <button @click="router.push('/problems')" class="back-btn">← 返回列表</button>
         <div class="nav-right">
-             <span class="score-badge" v-if="totalScore > 0">当前得分: {{ currentScore }} / {{ totalScore }}</span>
-             <span class="user-badge">{{ studentId }}</span>
+             <span class="score-badge" v-if="totalScore > 0 && studentId">当前得分: {{ currentScore }} / {{ totalScore }}</span>
+             <span class="user-badge">{{ studentId ? studentId : '游客' }}</span>
         </div>
     </div>
 
@@ -13,6 +13,10 @@
         <!-- Terminated Banner -->
         <div v-if="isTerminated" class="terminated-banner">
              🛑 作业已截止 ({{ formatTime(deadline) }})，仅供查看，无法提交。
+        </div>
+
+        <div v-if="!studentId && !token" class="guest-banner">
+             👁️ 当前为游客浏览模式，无法提交答案。
         </div>
 
         <!-- 题目动态渲染区域 -->
@@ -86,15 +90,15 @@ const currentScore = computed(() => {
 // 并且绑定事件
 
 onMounted(async () => {
-    if (!token) {
-        router.push('/')
-        return
-    }
+    // Guest allowed
     
     try {
-        const res = await axios.get(`${API_BASE_URL}/problems/${problemId}`, {
-            headers: { Authorization: `Bearer ${token}` }
-        })
+        const config = {}
+        if (token) {
+            config.headers = { Authorization: `Bearer ${token}` }
+        }
+    
+        const res = await axios.get(`${API_BASE_URL}/problems/${problemId}`, config)
         const data = res.data
         
         // 1. 渲染 Markdown -> HTML (包含数学公式)
@@ -151,7 +155,10 @@ const bindInputs = () => {
         const isLocallyLocked = status.locked || status.correct
         const isGloballyLocked = isTerminated.value
         
-        if (isGloballyLocked) {
+        if (!studentId && !token) {
+             input.placeholder = '按回车验证'
+             input.disabled = false
+        } else if (isGloballyLocked) {
              input.placeholder = '已截止'
              input.disabled = true
              input.classList.add('terminated')
@@ -186,9 +193,14 @@ const bindInputs = () => {
         const info = document.createElement('span')
         info.className = 'attempt-info'
         info.dataset.id = id
-        info.textContent = status.correct
-            ? '已正确'
-            : (status.locked ? '已锁定' : `剩余 ${status.remaining} 次`)
+        
+        if (!studentId && !token) {
+             info.textContent = '游客验证'
+        } else {
+             info.textContent = status.correct
+                ? '已正确'
+                : (status.locked ? '已锁定' : `剩余 ${status.remaining} 次`)
+        }
 
         // 包装并替换 DOM
         const wrapper = document.createElement('span')
@@ -226,13 +238,39 @@ const submitSingleAnswer = async (input_id) => {
     singleAnswer[input_id] = userAnswers.value[input_id]
 
     try {
+        const config = {}
+        if (token) {
+            config.headers = { Authorization: `Bearer ${token}` }
+        }
+    
         const res = await axios.post(`${API_BASE_URL}/problems/submit`, {
             problem_id: problemId,
             answers: singleAnswer 
-        }, {
-            headers: { Authorization: `Bearer ${token}` }
-        })
+        }, config)
         
+        // 如果是游客，没有 attempt_status, 需要手动显示验证结果
+        if (!token) {
+            const isCorrect = res.data.results?.[input_id]
+            // 手动更新 DOM 提示
+            const info = document.querySelector(`.attempt-info[data-id="${input_id}"]`)
+            const input = document.querySelector(`.problem-input-field[data-id="${input_id}"]`)
+            if (info) {
+                info.textContent = isCorrect ? '✔️ 正确' : '❌ 错误'
+                info.style.color = isCorrect ? '#67c23a' : '#f56c6c'
+                // 如果正确，可以禁用输入框，或者让用户继续玩？既然是游客，就随便玩吧，这里不禁用
+            }
+            if (input) {
+                if(isCorrect) {
+                     input.style.borderColor = '#67c23a'
+                     input.style.backgroundColor = '#f0f9eb'
+                } else {
+                     input.style.borderColor = '#f56c6c'
+                     input.style.backgroundColor = '#fef0f0'
+                }
+            }
+            return
+        }
+
         // 更新尝试状态（后端会返回所有 ID 的最新状态）
         attemptStatus.value = res.data.attempt_status || {}
         
@@ -483,5 +521,16 @@ const updateInputStyle = (id, isCorrect) => {
     color: #909399;
     padding: 10px;
     text-align: right;
+}
+
+.guest-banner { 
+    color: #909399; 
+    margin-bottom: 15px; 
+    font-size: 13px; 
+    text-align: center; 
+    font-style: italic;
+    background-color: transparent;
+    padding: 5px;
+    border: none;
 }
 </style>

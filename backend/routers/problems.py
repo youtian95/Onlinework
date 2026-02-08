@@ -32,6 +32,33 @@ def get_session():
     with Session(engine) as session:
         yield session
 
+def get_optional_current_student(
+    authorization: Optional[str] = Header(None), 
+    session: Session = Depends(get_session)
+) -> Optional[Student]:
+    """Dependency that returns a Student if token is valid, else None"""
+    if not authorization:
+        return None
+    
+    if authorization.startswith("Bearer "):
+        token = authorization.split(" ")[1]
+    else:
+        token = authorization
+        
+    payload = verify_token(token)
+    if not payload:
+        return None
+        
+    student_id = payload.get("sub")
+    if not student_id:
+        return None
+    
+    student = session.exec(select(Student).where(Student.student_id == student_id)).first()
+    if not student or not student.enabled:
+        return None
+        
+    return student
+
 def get_current_student(
     authorization: str = Header(None), 
     session: Session = Depends(get_session)
@@ -75,10 +102,10 @@ def get_current_student(
 
 @router.get("")
 def list_problems(
-    current_student: Student = Depends(get_current_student), 
+    current_student: Optional[Student] = Depends(get_optional_current_student), 
     session: Session = Depends(get_session)
 ):
-    student_id = current_student.student_id
+    student_id = current_student.student_id if current_student else None
     problems = []
     if not os.path.exists(PROBLEMS_DIR):
         return []
@@ -101,9 +128,14 @@ def list_problems(
         # Default policy: problems without explicit state are UNPUBLISHED
         is_visible = state.is_visible if state else False
         is_deleted = state.is_deleted if state else False
+        is_public_view = state.is_public_view if state else False
         
         if is_deleted or not is_visible:
             continue
+
+        # If User is not logged in, only show public view problems
+        if not student_id and not is_public_view:
+             continue
 
         deadline = state.deadline if state else None
         if deadline and deadline.tzinfo is None:
@@ -150,10 +182,10 @@ def get_all_ranking(
 @router.get("/{problem_id}")
 def get_problem(
     problem_id: str, 
-    current_student: Student = Depends(get_current_student),
+    current_student: Optional[Student] = Depends(get_optional_current_student),
     session: Session = Depends(get_session)
 ):
-    student_id = current_student.student_id
+    student_id = current_student.student_id if current_student else None
     
     # Check access
     state = session.exec(select(ProblemState).where(ProblemState.problem_id == problem_id)).first()
@@ -162,6 +194,10 @@ def get_problem(
             raise HTTPException(status_code=404, detail="Problem not found")
         if not state.is_visible:
             raise HTTPException(status_code=403, detail="Problem not published")
+        
+        # Guest Access Check
+        if not student_id and not state.is_public_view:
+            raise HTTPException(status_code=403, detail="Access denied for guests")
             
     content = get_problem_content_and_status(session, problem_id, student_id)
     
@@ -193,11 +229,12 @@ def get_problem(
 # 以兼容前端直接请求 /submit 的情况
 def submit_answer_endpoint(
     req: SubmitRequest, 
-    current_student: Student = Depends(get_current_student),
+    current_student: Optional[Student] = Depends(get_optional_current_student),
     session: Session = Depends(get_session)
 ):
-    # Enforce student_id from token, ignoring whatever is in request body (for security)
-    req.student_id = current_student.student_id
+    # Enforce student_id from token if available, otherwise None for guest
+    req.student_id = current_student.student_id if current_student else None
+    
     return submit_answer(req, session)
 
 
@@ -218,6 +255,10 @@ def submit_answer(req: SubmitRequest, session: Session):
              raise HTTPException(status_code=404, detail="Problem not found")
         if not state.is_visible:
              raise HTTPException(status_code=403, detail="Problem not available")
+        # Check guest access if no student_id
+        if not req.student_id and not state.is_public_view:
+             raise HTTPException(status_code=403, detail="Guest submission not allowed")
+             
         if state.deadline:
              if datetime.now(timezone.utc) > state.deadline.replace(tzinfo=timezone.utc):
                  raise HTTPException(status_code=400, detail="Submission deadline passed")
@@ -228,7 +269,9 @@ def submit_answer(req: SubmitRequest, session: Session):
         raise HTTPException(status_code=404, detail="Problem not found")
 
     # 2. 重新生成参数
-    rng = get_stable_rng(f"{req.student_id}_{req.problem_id}")
+    # Use fixed seed for guests
+    seed = f"{req.student_id}_{req.problem_id}" if req.student_id else f"public_{req.problem_id}"
+    rng = get_stable_rng(seed)
     params = script.generate(rng)
 
     # 3. 验证
@@ -239,6 +282,15 @@ def submit_answer(req: SubmitRequest, session: Session):
         results = script.check(params, req.answers)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Check function error: {str(e)}")
+        
+    # If guest, return verification results immediately without DB recording
+    if not req.student_id:
+        return {
+            "correct": all(results.values()) if results else False,
+            "results": results,
+            "attempt_status": {}, # No persistence for guests
+            "message": "Answer verified (Guest Mode)"
+        }
 
     meta_inputs = script.meta.get("inputs", {}) if hasattr(script, "meta") else {}
     
