@@ -5,7 +5,13 @@ from backend.db import engine
 from backend.models import Student, Attempt, ProblemState
 from backend.core.config import ARCHIVES_DIR
 from backend.core.security import verify_token
-from backend.services.problems import load_problem_script, PROBLEMS_DIR, get_stable_rng
+from backend.services.problems import (
+    load_problem_script,
+    PROBLEMS_DIR,
+    get_stable_rng,
+    ensure_meta_inputs,
+    DEFAULT_INPUT_SCORE
+)
 from jinja2 import Template
 import csv
 import io
@@ -66,7 +72,7 @@ class ExportInputHelper:
         attempt = self.attempts_map.get(input_id)
         
         config = self.meta_inputs.get(input_id, {})
-        max_score = config.get("score", 0)
+        max_score = config.get("score", DEFAULT_INPUT_SCORE)
         self.total_possible += max_score
         
         user_score = 0
@@ -328,14 +334,15 @@ def export_scores(session: Session = Depends(get_session), token: str = Query(..
         inputs_meta = {}
         if script and hasattr(script, "meta"):
             p_title = script.meta.get("title", pid)
-            inputs_meta = script.meta.get("inputs", {})
+            meta = ensure_meta_inputs(script.meta)
+            inputs_meta = meta.get("inputs", {})
             
         header.append(f"{p_title}(总分)")
         prob_col_indices[pid] = len(header) - 1
         
         for iid, conf in inputs_meta.items():
             header.append(f"{p_title}-{iid}")
-            prob_input_map.append((pid, iid, conf.get("score", 0)))
+            prob_input_map.append((pid, iid, conf.get("score", DEFAULT_INPUT_SCORE)))
             
     writer.writerow(header)
     
@@ -356,10 +363,14 @@ def export_scores(session: Session = Depends(get_session), token: str = Query(..
             p_total = 0
             
             script = load_problem_script(pid)
-            inputs_meta = script.meta.get("inputs", {}) if script and hasattr(script, "meta") else {}
+            if script and hasattr(script, "meta"):
+                meta = ensure_meta_inputs(script.meta)
+                inputs_meta = meta.get("inputs", {})
+            else:
+                inputs_meta = {}
             
             for iid, conf in inputs_meta.items():
-                max_val = conf.get("score", 0)
+                max_val = conf.get("score", DEFAULT_INPUT_SCORE)
                 att = att_map.get((s.student_id, pid, iid))
                 score = 0
                 if att and att.correct:
@@ -432,7 +443,11 @@ def export_work(session: Session = Depends(get_session), token: str = Query(...)
                     content = f.read()
                 
                 s_attempts = mega_map.get(s.student_id, {}).get(pid, {})
-                meta_inputs = script.meta.get("inputs", {}) if hasattr(script, "meta") else {}
+                if hasattr(script, "meta"):
+                    meta = ensure_meta_inputs(script.meta)
+                    meta_inputs = meta.get("inputs", {})
+                else:
+                    meta_inputs = {}
                 
                 helper = ExportInputHelper(s_attempts, meta_inputs)
                 render_context = {**params, "input": helper}

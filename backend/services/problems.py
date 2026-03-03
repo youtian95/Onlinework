@@ -1,3 +1,6 @@
+# 本文件作用：提供问题相关的服务函数，包括加载问题脚本、构建尝试状态、获取问题内容和状态、获取问题排名等。
+
+
 import os
 import time
 import importlib.util
@@ -16,15 +19,69 @@ PROBLEMS_DIR = os.path.join(BACKEND_DIR, "problems")
 _RANKING_CACHE = {}
 _CACHE_TTL = 10  # 缓存有效期 10 秒
 
+DEFAULT_INPUT_SCORE = 1
+DEFAULT_MAX_ATTEMPTS = 3
+
+def ensure_meta_inputs(meta):
+    if not isinstance(meta, dict):
+        return {"inputs": {}}
+    if "inputs" not in meta or meta.get("inputs") is None:
+        meta = dict(meta)
+        meta["inputs"] = {}
+    elif not isinstance(meta.get("inputs"), dict):
+        meta = dict(meta)
+        meta["inputs"] = {}
+    return meta
+
 class ProblemInputs:
     def __init__(self):
         self.inputs = []
 
     def __call__(self, input_id):
         self.inputs.append(input_id)
-        # 直接返回 HTML 占位符，不再依赖 KaTeX
-        # 前端 marked 会保留此 HTML，onMounted 时会被替换
+        # 生成标准的 HTML 占位符
+        # 前端会查找 class="problem-input-placeholder" 的元素并进行替换
+        # 使用 id 属性方便定位，虽然 HTML 规范不建议重复 ID，但在我们的替换逻辑中是兼容的
         return f'<span id="{input_id}" class="problem-input-placeholder" style="display:inline-block; min-width: 40px;"></span>'
+
+def collect_input_ids(problem_id: str, params: dict) -> list:
+    md_path = os.path.join(PROBLEMS_DIR, problem_id, "problem.md")
+    if not os.path.exists(md_path):
+        return []
+
+    with open(md_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    input_helper = ProblemInputs()
+    render_context = {**params, "input": input_helper}
+    template = Template(content)
+    # 虽然这里没有使用 render 的返回值，但必须执行 render 过程
+    # 因为只有在渲染过程中才会执行 {{ input(...) }} 标签，
+    # 从而触发 input_helper.__call__，把 input_id 收集到 input_helper.inputs 中
+    template.render(**render_context)
+    return list(set(input_helper.inputs))
+
+def get_problem_input_ids(problem_id: str, script=None) -> list:
+    """Helper to collect all input ids for a problem dynamically regardless of meta config"""
+    if not script:
+        script = load_problem_script(problem_id)
+        if not script:
+            return []
+            
+    # Use fixed seed to ensure consistent generation for parameter-dependent inputs
+    seed = f"public_{problem_id}"
+    rng = get_stable_rng(seed)
+    
+    try:
+        params = script.generate(rng) if hasattr(script, "generate") else {}
+    except Exception:
+        params = {}
+        
+    try:
+        input_ids = collect_input_ids(problem_id, params)
+        return list(set(input_ids))
+    except Exception:
+        return []
 
 def load_problem_script(problem_id: str):
     script_path = os.path.join(PROBLEMS_DIR, problem_id, "script.py")
@@ -58,11 +115,13 @@ def build_attempt_status(
     meta_inputs: dict,
 ):
     status = {}
-    for input_id in input_ids:
-        max_attempts = meta_inputs.get(input_id, {}).get("max_attempts", 1)
+    unique_input_ids = list(set(input_ids))
+    for input_id in unique_input_ids:
+        max_attempts = meta_inputs.get(input_id, {}).get("max_attempts", DEFAULT_MAX_ATTEMPTS)
         
         attempts = 0
         correct = False
+        last_answer = ""
         
         # Only query DB if we have a student_id
         if student_id:
@@ -76,6 +135,7 @@ def build_attempt_status(
             if attempt:
                 attempts = attempt.attempts
                 correct = attempt.correct
+                last_answer = attempt.last_answer
 
         remaining = 0 if correct else max(0, max_attempts - attempts)
         locked = (not correct) and attempts >= max_attempts
@@ -86,6 +146,7 @@ def build_attempt_status(
             "correct": correct,
             "locked": locked,
             "max_attempts": max_attempts,
+            "last_answer": last_answer,
         }
     return status
 
@@ -124,7 +185,9 @@ def get_problem_content_and_status(session: Session, problem_id: str, student_id
     template = Template(content)
     rendered_content = template.render(**render_context)
     
-    meta_inputs = script.meta.get("inputs", {}) if hasattr(script, "meta") else {}
+    raw_meta = script.meta if hasattr(script, "meta") else {}
+    meta = ensure_meta_inputs(raw_meta)
+    meta_inputs = meta.get("inputs", {})
     attempt_status = build_attempt_status(
         session,
         student_id,
@@ -137,7 +200,7 @@ def get_problem_content_and_status(session: Session, problem_id: str, student_id
         "id": problem_id,
         "content": rendered_content,
         "input_ids": input_helper.inputs,
-        "meta": script.meta,
+        "meta": meta,
         "attempt_status": attempt_status,
     }
 
@@ -165,7 +228,8 @@ def get_problem_ranking(session: Session, problem_id: str):
     if not script or not hasattr(script, "meta"):
         return []
     
-    meta_inputs = script.meta.get("inputs", {})
+    meta = ensure_meta_inputs(script.meta)
+    meta_inputs = meta.get("inputs", {})
     
     attempts = session.exec(
         select(Attempt).where(Attempt.problem_id == problem_id)
@@ -185,7 +249,7 @@ def get_problem_ranking(session: Session, problem_id: str):
             
         if a.correct:
             input_conf = meta_inputs.get(a.input_id, {})
-            score = input_conf.get("score", 0)
+            score = input_conf.get("score", DEFAULT_INPUT_SCORE)
             student_stats[a.student_id]["score"] += score
             
     # Fetch student names
@@ -244,10 +308,16 @@ def get_total_ranking(session: Session):
                 continue
 
             script = load_problem_script(name)
-            if script and hasattr(script, "meta"):
-                meta_inputs = script.meta.get("inputs", {})
-                for input_id, config in meta_inputs.items():
-                    score = config.get("score", 0)
+            if script:
+                # Use helper to find all input IDs
+                input_ids = get_problem_input_ids(name, script)
+                
+                meta = ensure_meta_inputs(script.meta) if hasattr(script, "meta") else {"inputs": {}}
+                meta_inputs = meta.get("inputs", {})
+                
+                for input_id in input_ids:
+                    config = meta_inputs.get(input_id, {})
+                    score = config.get("score", DEFAULT_INPUT_SCORE)
                     problem_scores[(name, input_id)] = score
                     total_possible_score += score
 
@@ -272,8 +342,9 @@ def get_total_ranking(session: Session):
             if stats["last_update"] is None or a.updated_at > stats["last_update"]:
                 stats["last_update"] = a.updated_at
             if a.correct:
-                score = problem_scores.get((a.problem_id, a.input_id), 0)
-                stats["score"] += score
+                if (a.problem_id, a.input_id) in problem_scores:
+                    score = problem_scores[(a.problem_id, a.input_id)]
+                    stats["score"] += score
             
     # 5. 生成排名列表
     ranking_list = []

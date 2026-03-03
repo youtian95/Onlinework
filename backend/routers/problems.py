@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 from typing import Dict, Optional
 from pydantic import BaseModel
@@ -16,7 +17,12 @@ from backend.services.problems import (
     PROBLEMS_DIR,
     build_attempt_status,
     get_problem_ranking,
-    get_total_ranking
+    get_total_ranking,
+    collect_input_ids,
+    ensure_meta_inputs,
+    DEFAULT_INPUT_SCORE,
+    DEFAULT_MAX_ATTEMPTS,
+    get_problem_input_ids
 )
 
 router = APIRouter()
@@ -148,12 +154,23 @@ def list_problems(
         script = load_problem_script(name)
         if script and hasattr(script, "meta"):
             # 计算分数
-            meta_inputs = script.meta.get("inputs", {})
+            meta = ensure_meta_inputs(script.meta)
+            meta_inputs = meta.get("inputs", {})
             total_score = 0
             obtained_score = 0
             
-            for input_id, config in meta_inputs.items():
-                s = config.get("score", 0)
+            # Use template rendering to find all input IDs, same as in get_problem logic
+            if student_id:
+                seed = f"{student_id}_{name}"
+            else:
+                seed = f"public_{name}"
+            
+            
+            input_ids = get_problem_input_ids(name, script)
+            
+            for input_id in input_ids:
+                config = meta_inputs.get(input_id, {})
+                s = config.get("score", DEFAULT_INPUT_SCORE)
                 total_score += s
                 
                 # 如果有记录且正确，则加分
@@ -278,8 +295,16 @@ def submit_answer(req: SubmitRequest, session: Session):
     if not hasattr(script, "check"):
         raise HTTPException(status_code=500, detail="Problem script missing check function")
 
+    class SafeAnswers(dict):
+        def get(self, key, default=None):
+            val = super().get(key, default)
+            # 处理 None、空字符串或只包含空白字符的字符串
+            if val is None or str(val).strip() == "":
+                return "0"
+            return val
+
     try:
-        results = script.check(params, req.answers)
+        results = script.check(params, SafeAnswers(req.answers))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Check function error: {str(e)}")
         
@@ -292,19 +317,22 @@ def submit_answer(req: SubmitRequest, session: Session):
             "message": "Answer verified (Guest Mode)"
         }
 
-    meta_inputs = script.meta.get("inputs", {}) if hasattr(script, "meta") else {}
+    raw_meta = script.meta if hasattr(script, "meta") else {}
+    meta = ensure_meta_inputs(raw_meta)
+    meta_inputs = meta.get("inputs", {})
     
-    # 修改逻辑：只处理用户本次提交了的 ID
+    # 修改逻辑：只处理用户本次提交了的 ID，并且去重
     # 这样可以支持单个填空的提交，而不会误伤其他未提交填空的尝试次数
-    full_input_ids = list(meta_inputs.keys())
-    submitted_input_ids = [k for k in full_input_ids if k in req.answers]
+    full_input_ids = get_problem_input_ids(req.problem_id, script)
+    unique_full_input_ids = list(set(full_input_ids))
+    submitted_input_ids = [k for k in unique_full_input_ids if k in req.answers]
 
     # 4. 记录尝试
     # require_student(session, req.student_id) # Already checked by Depend(get_current_student)
 
     # 只遍历用户提交了的 ID
     for input_id in submitted_input_ids:
-        max_attempts = meta_inputs.get(input_id, {}).get("max_attempts", 1)
+        max_attempts = meta_inputs.get(input_id, {}).get("max_attempts", DEFAULT_MAX_ATTEMPTS)
         answer = req.answers.get(input_id, "")
 
         attempt = session.exec(
@@ -347,7 +375,7 @@ def submit_answer(req: SubmitRequest, session: Session):
         session,
         req.student_id,
         req.problem_id,
-        full_input_ids,
+        unique_full_input_ids,
         meta_inputs,
     )
 
@@ -359,3 +387,45 @@ def submit_answer(req: SubmitRequest, session: Session):
         "attempt_status": attempt_status,
         "message": "Answer checked"
     }
+
+@router.get("/{problem_id}/{filename:path}")
+def get_problem_resource(
+    problem_id: str,
+    filename: str,
+    current_student: Optional[Student] = Depends(get_optional_current_student),
+    session: Session = Depends(get_session)
+):
+    # 1. Access Check
+    state = session.exec(select(ProblemState).where(ProblemState.problem_id == problem_id)).first()
+    student_id = current_student.student_id if current_student else None
+    
+    if state:
+        if state.is_deleted:
+             raise HTTPException(status_code=404, detail="Problem not found")
+        if not state.is_visible:
+             raise HTTPException(status_code=403, detail="Problem not published")
+             
+        # Guest Access Check
+        if not student_id and not state.is_public_view:
+             raise HTTPException(status_code=403, detail="Access denied")
+
+    # 2. Safety Check
+    if filename.endswith(".py") or filename.startswith(".") or "__pycache__" in filename:
+        raise HTTPException(status_code=403, detail="Access denied to source files")
+
+    file_path = os.path.join(PROBLEMS_DIR, problem_id, filename)
+    
+    # 3. Path Traversal Check
+    try:
+        abs_path = os.path.abspath(file_path)
+        base_path = os.path.abspath(os.path.join(PROBLEMS_DIR, problem_id))
+        if not abs_path.startswith(base_path):
+            raise HTTPException(status_code=403, detail="Invalid path")
+    except Exception:
+        raise HTTPException(status_code=403, detail="Invalid path")
+
+    if not os.path.exists(file_path) or not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    return FileResponse(file_path)
+

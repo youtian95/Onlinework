@@ -3,7 +3,17 @@ from sqlmodel import Session, select
 from pydantic import BaseModel
 from backend.db import engine
 from backend.models import Student, Attempt, ProblemState
-from backend.services.problems import load_problem_script, PROBLEMS_DIR, get_problem_ranking, get_total_ranking
+from backend.utils import get_stable_rng
+from backend.services.problems import (
+    load_problem_script,
+    PROBLEMS_DIR,
+    get_problem_ranking,
+    get_total_ranking,
+    ensure_meta_inputs,
+    DEFAULT_MAX_ATTEMPTS,
+    collect_input_ids,
+    get_problem_input_ids
+)
 from backend.core.config import ADMIN_PASSWORD
 from backend.core.security import pwd_context, create_access_token, verify_token
 import csv
@@ -291,7 +301,7 @@ def delete_student(student_id: str, session: Session = Depends(get_session)):
     return {"message": "Moved to recycle bin"}
 
 @router.get('/students/{student_id}/progress', dependencies=[Depends(verify_admin)])
-def get_student_progress(student_id: str, session: Session = Depends(get_session)):
+def get_student_progress_data(student_id: str, session: Session = Depends(get_session)):
     problems_data = []
     
     if not os.path.exists(PROBLEMS_DIR):
@@ -314,28 +324,31 @@ def get_student_progress(student_id: str, session: Session = Depends(get_session
             continue
 
         script = load_problem_script(problem_id)
-        if not script or not hasattr(script, 'meta'):
+        if not script:
             continue
             
-        meta = script.meta
+        # Collect dynamic inputs via helper
+        input_ids = get_problem_input_ids(problem_id, script)
+        
+        # Meta config inputs
+        raw_meta = script.meta if hasattr(script, 'meta') else {}
+        meta = ensure_meta_inputs(raw_meta)
         title = meta.get('title', problem_id)
         inputs_meta = meta.get('inputs', {})
         
         problem_inputs = {}
         
-        # 遍历题目配置的输入项
-        for input_id, config in inputs_meta.items():
-            max_attempts = config.get('max_attempts', 1)
+        for input_id in input_ids:
+            config = inputs_meta.get(input_id, {})
+            max_attempts = config.get('max_attempts', DEFAULT_MAX_ATTEMPTS)
             
-            # 获取用户的尝试记录
-            attempt_record = attempts_map.get((problem_id, input_id))
-            used_attempts = attempt_record.attempts if attempt_record else 0
-            is_correct = attempt_record.correct if attempt_record else False
+            # Recalculate from map
+            arec = attempts_map.get((problem_id, input_id))
             
             problem_inputs[input_id] = {
-                'attempts': used_attempts,
+                'attempts': arec.attempts if arec else 0,
                 'max_attempts': max_attempts,
-                'correct': is_correct
+                'correct': arec.correct if arec else False
             }
             
         problems_data.append({
