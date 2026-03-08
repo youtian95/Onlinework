@@ -24,6 +24,15 @@ class Attempt(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class ProblemSubmission(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    student_id: str = Field(index=True)
+    problem_id: str = Field(index=True)
+    pdf_path: str
+    original_filename: Optional[str] = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class ProblemState(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     problem_id: str = Field(index=True, unique=True)

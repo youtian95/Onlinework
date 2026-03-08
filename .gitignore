@@ -30,6 +30,7 @@ yarn-error.log*
 # Database & Uploads
 backend/db/*.db
 backend/public/cover*
+backend/public/submissions/
 backend/archive/*.zip
 
 # Problems: ignore all except demo folders

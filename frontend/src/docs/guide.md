@@ -170,7 +170,7 @@ cd onlinework
 
 #### 3. 启动服务
 
-- 在1panel的容器编排中选择文件 `/opt/onlinework/docker-compose.yml`，就会自动部署。
+- 在1panel的容器编排中选择文件 `/opt/Onlinework/docker-compose.yml`，就会自动部署。
 - 直接访问 `http://服务器IP:5050`已经可以看到系统，后面添加域名和 HTTPS。
 - 在阿里云中添加域名解析`njtechsteel.youtian95.cn`，指向服务器 IP。
 - 在1panel中添加网站，反向代理到 `http://localhost:5050`。
@@ -185,10 +185,11 @@ cd onlinework
 # 拉取最新代码（或者手动上传到服务器）
 git pull
 
-# 2. 重新构建并重启 (命令行方式)
-docker-compose up -d --build
+# 2. 重新构建并重启（命令行方式）
+docker compose down
+docker compose up -d --build
 
 # 2. 重新构建并重启 (1Panel方式)
-# 在1Panel的容器镜像需要清除镜像，然后再次部署docker-compose.yml，不然可能会使用旧镜像导致代码更新无效。
+# 在1Panel的容器镜中停止，删除镜像，清楚镜像缓存，然后再次部署docker-compose.yml，不然可能会使用旧镜像导致代码更新无效。
 
 ```

@@ -1,15 +1,20 @@
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, UploadFile, File
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select
 from typing import Dict, Optional
 from pydantic import BaseModel
 from datetime import datetime, timezone
 import os
+import re
+import uuid
+import shutil
+from pathlib import Path
 
 from backend.db import engine
-from backend.models import Student, Attempt, ProblemState
+from backend.models import Student, Attempt, ProblemState, ProblemSubmission
 from backend.utils import get_stable_rng
 from backend.core.security import verify_token
+from backend.core.config import PUBLIC_DIR
 from backend.services.problems import (
     load_problem_script, 
     require_student, 
@@ -26,6 +31,66 @@ from backend.services.problems import (
 )
 
 router = APIRouter()
+SUBMISSIONS_DIR = PUBLIC_DIR / "submissions"
+
+
+def _safe_name(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "")).strip("._-")
+    return cleaned or "unknown"
+
+
+def _save_submission_pdf(student_id: str, problem_id: str, pdf_file: UploadFile):
+    filename = pdf_file.filename or "submission.pdf"
+    ext = Path(filename).suffix.lower()
+    content_type = (pdf_file.content_type or "").lower()
+    if ext != ".pdf" and content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+
+    target_dir = SUBMISSIONS_DIR / _safe_name(problem_id) / _safe_name(student_id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_name = f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex}.pdf"
+    full_path = target_dir / saved_name
+
+    pdf_file.file.seek(0)
+    with open(full_path, "wb") as f:
+        shutil.copyfileobj(pdf_file.file, f)
+
+    rel_path = full_path.relative_to(PUBLIC_DIR).as_posix()
+    return rel_path, filename
+
+
+def _upsert_submission_record(
+    session: Session,
+    student_id: str,
+    problem_id: str,
+    pdf_path: str,
+    original_filename: str,
+):
+    record = session.exec(
+        select(ProblemSubmission).where(
+            ProblemSubmission.student_id == student_id,
+            ProblemSubmission.problem_id == problem_id,
+        )
+    ).first()
+
+    if record and record.pdf_path:
+        old_path = PUBLIC_DIR / record.pdf_path
+        if old_path.exists() and old_path.is_file() and old_path != (PUBLIC_DIR / pdf_path):
+            try:
+                old_path.unlink()
+            except OSError:
+                pass
+
+    if not record:
+        record = ProblemSubmission(student_id=student_id, problem_id=problem_id, pdf_path=pdf_path)
+        session.add(record)
+
+    record.pdf_path = pdf_path
+    record.original_filename = original_filename
+    record.updated_at = datetime.now(timezone.utc)
+    return record
+
 
 class SubmitRequest(BaseModel):
     # student_id optional/ignored in payload because we get it from token
@@ -235,8 +300,19 @@ def get_problem(
              is_terminated = True
              
     if isinstance(content, dict):
+        submission = None
+        if student_id:
+            submission = session.exec(
+                select(ProblemSubmission).where(
+                    ProblemSubmission.student_id == student_id,
+                    ProblemSubmission.problem_id == problem_id,
+                )
+            ).first()
+
         content["is_terminated"] = is_terminated
         content["deadline"] = deadline
+        content["pdf_uploaded"] = bool(submission)
+        content["pdf_filename"] = submission.original_filename if submission else None
             
     return content
 
@@ -245,14 +321,52 @@ def get_problem(
 # 为了保持路由模块的独立性，我们在这里定义，但在 main.py 中我们会单独处理挂载
 # 以兼容前端直接请求 /submit 的情况
 def submit_answer_endpoint(
-    req: SubmitRequest, 
+    req: SubmitRequest,
     current_student: Optional[Student] = Depends(get_optional_current_student),
     session: Session = Depends(get_session)
 ):
     # Enforce student_id from token if available, otherwise None for guest
     req.student_id = current_student.student_id if current_student else None
-    
+
     return submit_answer(req, session)
+
+
+@router.post("/{problem_id}/pdf")
+async def upload_problem_pdf(
+    problem_id: str,
+    pdf: UploadFile = File(...),
+    current_student: Student = Depends(get_current_student),
+    session: Session = Depends(get_session),
+):
+    state = session.exec(select(ProblemState).where(ProblemState.problem_id == problem_id)).first()
+    if state:
+        if state.is_deleted:
+            raise HTTPException(status_code=404, detail="Problem not found")
+        if not state.is_visible:
+            raise HTTPException(status_code=403, detail="Problem not available")
+
+    script = load_problem_script(problem_id)
+    if not script:
+        raise HTTPException(status_code=404, detail="Problem not found")
+
+    try:
+        saved_pdf_path, original_filename = _save_submission_pdf(current_student.student_id, problem_id, pdf)
+        _upsert_submission_record(
+            session,
+            current_student.student_id,
+            problem_id,
+            saved_pdf_path,
+            original_filename,
+        )
+        session.commit()
+    finally:
+        await pdf.close()
+
+    return {
+        "message": "PDF uploaded",
+        "pdf_uploaded": True,
+        "pdf_filename": original_filename,
+    }
 
 
 @router.get("/{problem_id}/ranking")
@@ -306,7 +420,11 @@ def submit_answer(req: SubmitRequest, session: Session):
     try:
         results = script.check(params, SafeAnswers(req.answers))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Check function error: {str(e)}")
+        # 容错：题目脚本在单字段提交或异常输入下抛错时，
+        # 不让整个接口 500，而是将本次提交字段判为错误。
+        print(f"WARN: check() failed for problem {req.problem_id}: {e}")
+        submitted_keys = list(req.answers.keys()) if isinstance(req.answers, dict) else []
+        results = {k: False for k in submitted_keys}
         
     # If guest, return verification results immediately without DB recording
     if not req.student_id:
@@ -385,7 +503,7 @@ def submit_answer(req: SubmitRequest, session: Session):
         "correct": overall_correct,
         "results": results,
         "attempt_status": attempt_status,
-        "message": "Answer checked"
+        "message": "Answer checked",
     }
 
 @router.get("/{problem_id}/{filename:path}")

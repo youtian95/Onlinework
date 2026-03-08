@@ -23,6 +23,26 @@
         <div class="problem-content markdown-body" v-html="renderedContent"></div>
 
         <div class="actions" v-if="!isTerminated">
+             <div v-if="token" class="pdf-upload-panel">
+                <label class="pdf-upload-label" for="pdf-upload-input">作业 PDF：</label>
+                <input
+                    id="pdf-upload-input"
+                    ref="pdfInputRef"
+                    class="pdf-upload-input"
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    @change="onPdfFileChange"
+                >
+                <button class="pdf-upload-btn" type="button" @click="uploadPdf" :disabled="!selectedPdfFile || uploadingPdf">
+                    {{ uploadingPdf ? '上传中...' : '上传 PDF' }}
+                </button>
+                <div class="pdf-upload-status">
+                    <span v-if="selectedPdfName">待上传：{{ selectedPdfName }}</span>
+                    <span v-else-if="hasUploadedPdf">已保存：{{ uploadedPdfName || '已上传 PDF' }}</span>
+                    <span v-else>可选：上传作业 PDF（与答题提交分开）</span>
+                </div>
+             </div>
+
             <!-- 整体提交按钮已废弃，改为单个输入框回车提交 -->
             <!-- <button class="submit-btn" @click="submitAnswers">提交答案</button> -->
              <div class="hint-text">💡 提示：输入答案后按 <b>Enter</b> 键提交单个空</div>
@@ -63,6 +83,12 @@ const attemptStatus = ref({})
 const meta = ref({})
 const isTerminated = ref(false)
 const deadline = ref(null)
+const selectedPdfFile = ref(null)
+const selectedPdfName = ref('')
+const uploadedPdfName = ref('')
+const hasUploadedPdf = ref(false)
+const pdfInputRef = ref(null)
+const uploadingPdf = ref(false)
 
 const metaInputs = computed(() => {
     const inputs = meta.value?.inputs
@@ -140,6 +166,8 @@ onMounted(async () => {
         meta.value = data.meta || {}
         isTerminated.value = data.is_terminated || false
         deadline.value = data.deadline
+        hasUploadedPdf.value = !!data.pdf_uploaded
+        uploadedPdfName.value = data.pdf_filename || ''
         
         // 2. 注入 HTML 并挂载 Inputs
         renderedContent.value = html
@@ -168,6 +196,71 @@ onMounted(async () => {
         loading.value = false
     }
 })
+
+const onPdfFileChange = (event) => {
+    const file = event?.target?.files?.[0]
+    if (!file) {
+        selectedPdfFile.value = null
+        selectedPdfName.value = ''
+        return
+    }
+
+    const lowerName = (file.name || '').toLowerCase()
+    const contentType = (file.type || '').toLowerCase()
+    const isPdf = lowerName.endsWith('.pdf') || contentType === 'application/pdf'
+
+    if (!isPdf) {
+        alert('仅支持上传 PDF 文件。')
+        if (pdfInputRef.value) {
+            pdfInputRef.value.value = ''
+        }
+        selectedPdfFile.value = null
+        selectedPdfName.value = ''
+        return
+    }
+
+    selectedPdfFile.value = file
+    selectedPdfName.value = file.name
+}
+
+const uploadPdf = async () => {
+    if (!token) return
+    if (!selectedPdfFile.value) {
+        alert('请先选择一个 PDF 文件。')
+        return
+    }
+
+    try {
+        uploadingPdf.value = true
+        const formData = new FormData()
+        formData.append('pdf', selectedPdfFile.value)
+
+        const res = await axios.post(
+            `${API_BASE_URL}/problems/${problemId}/pdf`,
+            formData,
+            { headers: { Authorization: `Bearer ${token}` } }
+        )
+
+        hasUploadedPdf.value = !!res.data?.pdf_uploaded
+        uploadedPdfName.value = res.data?.pdf_filename || selectedPdfName.value
+        selectedPdfFile.value = null
+        selectedPdfName.value = ''
+        if (pdfInputRef.value) {
+            pdfInputRef.value.value = ''
+        }
+        alert('PDF 上传成功。')
+    } catch (e) {
+        if (e.response && (e.response.status === 403 || e.response.status === 401)) {
+            alert('登录已过期或未授权')
+            localStorage.removeItem('studentToken')
+            router.push('/')
+        } else {
+            alert(e.response?.data?.detail || 'PDF 上传失败')
+        }
+    } finally {
+        uploadingPdf.value = false
+    }
+}
 
 // 绑定自定义标签为真实输入框，并实现双向绑定
 const bindInputs = () => {
@@ -341,10 +434,10 @@ const submitSingleAnswer = async (input_id) => {
         if (token) {
             config.headers = { Authorization: `Bearer ${token}` }
         }
-    
+
         const res = await axios.post(`${API_BASE_URL}/problems/submit`, {
             problem_id: problemId,
-            answers: singleAnswer 
+            answers: singleAnswer,
         }, config)
         
         // 如果是游客，没有 attempt_status, 需要手动显示验证结果
@@ -390,6 +483,8 @@ const submitSingleAnswer = async (input_id) => {
             alert('登录已过期或未授权')
             localStorage.removeItem('studentToken')
             router.push('/')
+        } else if (e.response?.status === 400) {
+            alert(e.response?.data?.detail || '提交参数错误')
         } else {
             console.error(e)
             // 简单的抖动错误反馈，或者 toast
@@ -410,7 +505,9 @@ const updateInputStyleDOM = (input, isCorrect) => {
         input.classList.add('incorrect')
         input.style.borderColor = '#f56c6c'
         input.style.backgroundColor = '#fef0f0'
-        // 触发一次摇晃动画
+        // 触发一次摇晃动画；先移除再强制重排，确保连续答错也会再次播放。
+        input.classList.remove('shake')
+        void input.offsetWidth
         input.classList.add('shake')
         setTimeout(() => input.classList.remove('shake'), 400)
     }
@@ -458,6 +555,25 @@ const updateInputStyle = (id, isCorrect) => {
     color: #909399;
     cursor: not-allowed;
 }
+
+.problem-input-field.shake {
+    animation: inputShake 0.35s ease-in-out;
+}
+
+@keyframes inputShake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-5px); }
+    40% { transform: translateX(5px); }
+    60% { transform: translateX(-4px); }
+    80% { transform: translateX(4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .problem-input-field.shake {
+        animation: none;
+    }
+}
+
 .input-wrapper {
     display: inline-flex;
     position: relative; /* 设置相对定位，作为 tooltip 的容器 */
@@ -608,7 +724,6 @@ const updateInputStyle = (id, isCorrect) => {
     padding-top: 20px;
     display: flex;
     flex-direction: column;
-    align-items: flex-end;
 }
 
 .submit-btn {
@@ -634,6 +749,84 @@ const updateInputStyle = (id, isCorrect) => {
     color: #909399;
     padding: 10px;
     text-align: right;
+}
+
+.pdf-upload-panel {
+    border: 1px solid #d9e6ff;
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 10px;
+    background: linear-gradient(180deg, #f7faff 0%, #fdfefe 100%);
+    box-shadow: 0 8px 20px rgba(64, 158, 255, 0.08);
+    display: grid;
+    gap: 10px;
+}
+
+.pdf-upload-label {
+    display: block;
+    font-size: 13px;
+    color: #5f6b7a;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+}
+
+.pdf-upload-input {
+    font-size: 13px;
+    border: 1px solid #dbe5f0;
+    background: #fff;
+    border-radius: 10px;
+    padding: 8px;
+}
+
+.pdf-upload-input::file-selector-button {
+    border: 0;
+    border-radius: 8px;
+    padding: 7px 12px;
+    margin-right: 10px;
+    cursor: pointer;
+    background: #ecf5ff;
+    color: #1f6feb;
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+
+.pdf-upload-input::file-selector-button:hover {
+    background: #dbeafe;
+}
+
+.pdf-upload-btn {
+    justify-self: start;
+    background: linear-gradient(135deg, #1f8fff 0%, #2ea6ff 100%);
+    color: #fff;
+    border: none;
+    border-radius: 999px;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: 0 8px 16px rgba(31, 143, 255, 0.24);
+    transition: transform 0.12s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+
+.pdf-upload-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 20px rgba(31, 143, 255, 0.3);
+    filter: saturate(1.05);
+}
+
+.pdf-upload-btn:disabled {
+    background: linear-gradient(135deg, #a9d4ff 0%, #c2e3ff 100%);
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+.pdf-upload-status {
+    font-size: 12px;
+    color: #5f6b7a;
+    background: rgba(255, 255, 255, 0.8);
+    border: 1px solid #e9f0fb;
+    border-radius: 8px;
+    padding: 6px 10px;
 }
 
 .guest-banner { 
