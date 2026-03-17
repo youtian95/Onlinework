@@ -2,14 +2,25 @@
 
 
 import os
+import re
 import time
 import importlib.util
+from typing import Dict
 from jinja2 import Template
 from sqlmodel import Session, select
 from datetime import datetime, timezone
 from fastapi import HTTPException
 from backend.utils import get_stable_rng
-from backend.models import Student, Attempt, ProblemState
+from backend.models import (
+    Student,
+    Attempt,
+    ProblemState,
+    TeamWorkConfig,
+    Team,
+    TeamMember,
+    TeamSubproblemClaim,
+    TeamAttempt,
+)
 
 # 获取后端目录的绝对路径
 BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -21,6 +32,20 @@ _CACHE_TTL = 10  # 缓存有效期 10 秒
 
 DEFAULT_INPUT_SCORE = 1
 DEFAULT_MAX_ATTEMPTS = 3
+SUBPROBLEM_BLOCK_RE = re.compile(
+    r"^[ \t]*<subproblem(?:\s+title=(['\"])(.*?)\1)?\s*>[ \t]*(?:\r?\n)?"
+    r"(.*?)"
+    r"^[ \t]*</subproblem>[ \t]*$",
+    re.IGNORECASE | re.DOTALL | re.MULTILINE,
+)
+
+
+def _ensure_utc_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 def ensure_meta_inputs(meta):
     if not isinstance(meta, dict):
@@ -60,6 +85,113 @@ def collect_input_ids(problem_id: str, params: dict) -> list:
     # 从而触发 input_helper.__call__，把 input_id 收集到 input_helper.inputs 中
     template.render(**render_context)
     return list(set(input_helper.inputs))
+
+
+def split_problem_markdown_by_subproblems(content: str):
+    blocks = []
+    plain_parts = []
+    render_sequence = []
+    last_end = 0
+
+    for idx, match in enumerate(SUBPROBLEM_BLOCK_RE.finditer(content or ""), start=1):
+        plain_chunk = content[last_end:match.start()]
+        plain_parts.append(plain_chunk)
+        if plain_chunk.strip():
+            render_sequence.append({
+                "type": "plain",
+                "content": plain_chunk,
+            })
+
+        inner_markdown = (match.group(3) or "").strip("\n")
+        title = match.group(2) or None
+        blocks.append({
+            "subproblem_no": idx,
+            "title": title,
+            "content": inner_markdown,
+        })
+        render_sequence.append({
+            "type": "subproblem",
+            "subproblem_no": idx,
+            "title": title,
+            "content": inner_markdown,
+        })
+        last_end = match.end()
+
+    tail_chunk = content[last_end:]
+    plain_parts.append(tail_chunk)
+    if tail_chunk.strip():
+        render_sequence.append({
+            "type": "plain",
+            "content": tail_chunk,
+        })
+
+    plain_content = "".join(plain_parts)
+    return blocks, plain_content, render_sequence
+
+
+def get_problem_subproblem_bundle(problem_id: str, params: dict):
+    md_path = os.path.join(PROBLEMS_DIR, problem_id, "problem.md")
+    if not os.path.exists(md_path):
+        return {
+            "plain_content": "",
+            "input_subproblem_map": {},
+            "subproblems": [],
+            "render_sequence": [],
+        }
+
+    with open(md_path, "r", encoding="utf-8") as f:
+        raw_content = f.read()
+
+    blocks, plain_content, raw_sequence = split_problem_markdown_by_subproblems(raw_content)
+
+    rendered_blocks = []
+    rendered_plain_segments = []
+    input_subproblem_map: Dict[str, int] = {}
+    for block in blocks:
+        helper = ProblemInputs()
+        render_context = {**params, "input": helper}
+        rendered_content = Template(block["content"]).render(**render_context)
+        input_ids = list(dict.fromkeys(helper.inputs))
+        for input_id in input_ids:
+            input_subproblem_map[input_id] = block["subproblem_no"]
+
+        rendered_blocks.append({
+            "subproblem_no": block["subproblem_no"],
+            "title": block["title"],
+            "content": rendered_content,
+            "input_ids": input_ids,
+        })
+
+    for seg in raw_sequence:
+        if seg.get("type") != "plain":
+            continue
+        helper = ProblemInputs()
+        render_context = {**params, "input": helper}
+        rendered_plain = Template(seg.get("content") or "").render(**render_context)
+        rendered_plain_segments.append({
+            "type": "plain",
+            "content": rendered_plain,
+        })
+
+    rendered_sequence = []
+    plain_idx = 0
+    for seg in raw_sequence:
+        if seg.get("type") == "plain":
+            rendered_sequence.append(rendered_plain_segments[plain_idx])
+            plain_idx += 1
+            continue
+        if seg.get("type") == "subproblem":
+            rendered_sequence.append({
+                "type": "subproblem",
+                "subproblem_no": seg.get("subproblem_no"),
+            })
+
+    return {
+        "plain_content": plain_content,
+        "input_subproblem_map": input_subproblem_map,
+        "subproblems": rendered_blocks,
+        "render_sequence": rendered_sequence,
+    }
 
 def get_problem_input_ids(problem_id: str, script=None) -> list:
     """Helper to collect all input ids for a problem dynamically regardless of meta config"""
@@ -177,12 +309,14 @@ def get_problem_content_and_status(session: Session, problem_id: str, student_id
     
     with open(md_path, "r", encoding="utf-8") as f:
         content = f.read()
-        
+
+    bundle = get_problem_subproblem_bundle(problem_id, params)
+
     # 4. 渲染模板
     input_helper = ProblemInputs()
     render_context = {**params, "input": input_helper}
-    
-    template = Template(content)
+
+    template = Template(bundle.get("plain_content") or content)
     rendered_content = template.render(**render_context)
     
     raw_meta = script.meta if hasattr(script, "meta") else {}
@@ -192,16 +326,19 @@ def get_problem_content_and_status(session: Session, problem_id: str, student_id
         session,
         student_id,
         problem_id,
-        input_helper.inputs,
+        list(dict.fromkeys((input_helper.inputs or []) + list(bundle.get("input_subproblem_map", {}).keys()))),
         meta_inputs,
     )
 
     return {
         "id": problem_id,
         "content": rendered_content,
-        "input_ids": input_helper.inputs,
+        "input_ids": list(dict.fromkeys((input_helper.inputs or []) + list(bundle.get("input_subproblem_map", {}).keys()))),
         "meta": meta,
         "attempt_status": attempt_status,
+        "subproblems": bundle.get("subproblems", []),
+        "input_subproblem_map": bundle.get("input_subproblem_map", {}),
+        "render_sequence": bundle.get("render_sequence", []),
     }
 
 # 获取题目排名
@@ -238,14 +375,17 @@ def get_problem_ranking(session: Session, problem_id: str):
     student_stats = {}
     
     for a in attempts:
+        current_update = _ensure_utc_datetime(a.updated_at)
         if a.student_id not in student_stats:
             student_stats[a.student_id] = {
                 "score": 0,
-                "last_update": a.updated_at
+                "last_update": current_update
             }
         
-        if a.updated_at > student_stats[a.student_id]["last_update"]:
-            student_stats[a.student_id]["last_update"] = a.updated_at
+        if current_update is not None:
+            last_update = student_stats[a.student_id]["last_update"]
+            if last_update is None or current_update > last_update:
+                student_stats[a.student_id]["last_update"] = current_update
             
         if a.correct:
             input_conf = meta_inputs.get(a.input_id, {})
@@ -272,7 +412,13 @@ def get_problem_ranking(session: Session, problem_id: str):
             "last_update": stats["last_update"]
         })
         
-    ranking_list.sort(key=lambda x: (-x["score"], x["last_update"]))
+    def sort_key(item):
+        dt = _ensure_utc_datetime(item["last_update"])
+        if dt is None:
+            dt = datetime.max.replace(tzinfo=timezone.utc)
+        return (-item["score"], dt)
+
+    ranking_list.sort(key=sort_key)
     
     for i, item in enumerate(ranking_list):
         item["rank"] = i + 1
@@ -280,6 +426,253 @@ def get_problem_ranking(session: Session, problem_id: str):
     # 更新缓存
     _RANKING_CACHE[problem_id] = (now, ranking_list)
     
+    return ranking_list
+def _build_input_subproblem_map(problem_id: str, params: dict, subproblem_count: int) -> Dict[str, int]:
+    bundle = get_problem_subproblem_bundle(problem_id, params)
+    mapping = bundle.get("input_subproblem_map", {})
+    if len(bundle.get("subproblems", [])) != subproblem_count:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Teamwork problem {problem_id} requires exactly {subproblem_count} <subproblem> blocks in problem.md",
+        )
+    if not mapping:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Teamwork problem {problem_id} has no inputs inside <subproblem> blocks",
+        )
+    return mapping
+
+
+def _get_input_score_map(problem_id: str, script) -> tuple[list, dict, int]:
+    input_ids = get_problem_input_ids(problem_id, script)
+    meta = ensure_meta_inputs(script.meta) if script and hasattr(script, "meta") else {"inputs": {}}
+    meta_inputs = meta.get("inputs", {})
+
+    input_scores = {}
+    total_possible = 0
+    for input_id in set(input_ids):
+        score = meta_inputs.get(input_id, {}).get("score", DEFAULT_INPUT_SCORE)
+        input_scores[input_id] = score
+        total_possible += score
+
+    return input_ids, input_scores, total_possible
+
+
+def get_teamwork_personal_ranking(session: Session, problem_id: str):
+    cache_key = f"TW_PERSONAL:{problem_id}"
+    now = time.time()
+    if cache_key in _RANKING_CACHE:
+        ts, data = _RANKING_CACHE[cache_key]
+        if now - ts < _CACHE_TTL:
+            return data
+
+    config = session.exec(
+        select(TeamWorkConfig).where(TeamWorkConfig.problem_id == problem_id)
+    ).first()
+    if not config:
+        return []
+
+    script = load_problem_script(problem_id)
+    if not script:
+        return []
+
+    input_ids, input_scores, _ = _get_input_score_map(problem_id, script)
+    rng = get_stable_rng(f"public_{problem_id}")
+    try:
+        params = script.generate(rng) if hasattr(script, "generate") else {}
+    except Exception:
+        params = {}
+    input_sub_map = _build_input_subproblem_map(problem_id, params, config.subproblem_count)
+
+    subproblem_total = {}
+    for input_id, score in input_scores.items():
+        sub_no = input_sub_map.get(input_id)
+        if sub_no is None:
+            continue
+        subproblem_total[sub_no] = subproblem_total.get(sub_no, 0) + score
+
+    members = session.exec(
+        select(TeamMember).where(TeamMember.problem_id == problem_id)
+    ).all()
+    if not members:
+        return []
+
+    member_by_student = {m.student_id: m for m in members}
+    student_ids = list(member_by_student.keys())
+
+    students = session.exec(select(Student).where(
+        Student.student_id.in_(student_ids),
+        Student.enabled == True,
+        Student.is_test == False,
+        Student.is_deleted == False,
+    )).all()
+    student_name_map = {s.student_id: s.name for s in students}
+    valid_student_ids = set(student_name_map.keys())
+
+    team_ids = list({m.team_id for m in members})
+    team_rows = session.exec(select(Team).where(Team.id.in_(team_ids))).all()
+    team_map = {t.id: t for t in team_rows}
+
+    claims = session.exec(
+        select(TeamSubproblemClaim).where(TeamSubproblemClaim.problem_id == problem_id)
+    ).all()
+    claim_by_student = {c.student_id: c.subproblem_no for c in claims}
+
+    attempts = session.exec(
+        select(TeamAttempt).where(TeamAttempt.problem_id == problem_id)
+    ).all()
+
+    stats = {
+        sid: {"score": 0, "last_update": None}
+        for sid in valid_student_ids
+    }
+
+    for a in attempts:
+        sid = a.student_id
+        if sid not in stats:
+            continue
+
+        current_update = _ensure_utc_datetime(a.updated_at)
+        current_last = stats[sid]["last_update"]
+        if current_update is not None and (current_last is None or current_update > current_last):
+            stats[sid]["last_update"] = current_update
+
+        if not a.correct:
+            continue
+
+        expected_sub = claim_by_student.get(sid)
+        if expected_sub is None:
+            continue
+        if input_sub_map.get(a.input_id) != expected_sub:
+            continue
+
+        stats[sid]["score"] += input_scores.get(a.input_id, DEFAULT_INPUT_SCORE)
+
+    ranking_list = []
+    for sid in valid_student_ids:
+        member = member_by_student.get(sid)
+        if not member:
+            continue
+
+        claimed_sub = claim_by_student.get(sid)
+        total_possible = subproblem_total.get(claimed_sub, 0)
+        score = stats[sid]["score"]
+        score_rate = round((score / total_possible) * 100, 1) if total_possible > 0 else 0
+
+        team = team_map.get(member.team_id)
+        ranking_list.append({
+            "student_id": sid,
+            "name": student_name_map.get(sid, "-"),
+            "team_id": member.team_id,
+            "team_no": team.team_no if team else None,
+            "subproblem_no": claimed_sub,
+            "score": score,
+            "total_possible": total_possible,
+            "score_rate": score_rate,
+            "last_update": stats[sid]["last_update"],
+        })
+
+    def sort_key(item):
+        dt = _ensure_utc_datetime(item["last_update"])
+        if dt is None:
+            dt = datetime.max.replace(tzinfo=timezone.utc)
+        return (-item["score_rate"], -item["score"], dt)
+
+    ranking_list.sort(key=sort_key)
+    for i, item in enumerate(ranking_list):
+        item["rank"] = i + 1
+
+    _RANKING_CACHE[cache_key] = (now, ranking_list)
+    return ranking_list
+
+
+def get_teamwork_team_ranking(session: Session, problem_id: str):
+    cache_key = f"TW_TEAM:{problem_id}"
+    now = time.time()
+    if cache_key in _RANKING_CACHE:
+        ts, data = _RANKING_CACHE[cache_key]
+        if now - ts < _CACHE_TTL:
+            return data
+
+    config = session.exec(
+        select(TeamWorkConfig).where(TeamWorkConfig.problem_id == problem_id)
+    ).first()
+    if not config:
+        return []
+
+    script = load_problem_script(problem_id)
+    if not script:
+        return []
+
+    _, input_scores, total_possible = _get_input_score_map(problem_id, script)
+
+    teams = session.exec(
+        select(Team).where(Team.problem_id == problem_id).order_by(Team.team_no)
+    ).all()
+    if not teams:
+        return []
+
+    members = session.exec(
+        select(TeamMember).where(TeamMember.problem_id == problem_id)
+    ).all()
+    member_count_map = {}
+    for m in members:
+        member_count_map[m.team_id] = member_count_map.get(m.team_id, 0) + 1
+
+    attempts = session.exec(
+        select(TeamAttempt).where(TeamAttempt.problem_id == problem_id)
+    ).all()
+
+    stats = {
+        t.id: {"score": 0, "last_update": None, "counted_inputs": set()}
+        for t in teams
+    }
+
+    for a in attempts:
+        if a.team_id not in stats:
+            continue
+
+        current_update = _ensure_utc_datetime(a.updated_at)
+        current_last = stats[a.team_id]["last_update"]
+        if current_update is not None and (current_last is None or current_update > current_last):
+            stats[a.team_id]["last_update"] = current_update
+
+        if not a.correct:
+            continue
+        if a.input_id not in input_scores:
+            continue
+
+        if a.input_id in stats[a.team_id]["counted_inputs"]:
+            continue
+        stats[a.team_id]["counted_inputs"].add(a.input_id)
+        stats[a.team_id]["score"] += input_scores.get(a.input_id, DEFAULT_INPUT_SCORE)
+
+    ranking_list = []
+    for t in teams:
+        score = stats[t.id]["score"]
+        score_rate = round((score / total_possible) * 100, 1) if total_possible > 0 else 0
+        ranking_list.append({
+            "team_id": t.id,
+            "team_no": t.team_no,
+            "team_name": t.name,
+            "member_count": member_count_map.get(t.id, 0),
+            "score": score,
+            "total_possible": total_possible,
+            "score_rate": score_rate,
+            "last_update": stats[t.id]["last_update"],
+        })
+
+    def sort_key(item):
+        dt = _ensure_utc_datetime(item["last_update"])
+        if dt is None:
+            dt = datetime.max.replace(tzinfo=timezone.utc)
+        return (-item["score_rate"], -item["score"], dt)
+
+    ranking_list.sort(key=sort_key)
+    for i, item in enumerate(ranking_list):
+        item["rank"] = i + 1
+
+    _RANKING_CACHE[cache_key] = (now, ranking_list)
     return ranking_list
 
 def get_total_ranking(session: Session):
@@ -296,6 +689,7 @@ def get_total_ranking(session: Session):
     states_dict = {s.problem_id: s for s in all_states}
 
     problem_scores = {} # { (problem_id, input_id): score }
+    visible_problem_ids = set()
     total_possible_score = 0
     if os.path.exists(PROBLEMS_DIR):
         for name in os.listdir(PROBLEMS_DIR):
@@ -306,6 +700,8 @@ def get_total_ranking(session: Session):
 
             if is_deleted or not is_visible:
                 continue
+
+            visible_problem_ids.add(name)
 
             script = load_problem_script(name)
             if script:
@@ -321,6 +717,13 @@ def get_total_ranking(session: Session):
                     problem_scores[(name, input_id)] = score
                     total_possible_score += score
 
+    teamwork_problem_ids = set()
+    if visible_problem_ids:
+        team_problem_rows = session.exec(
+            select(TeamWorkConfig.problem_id).where(TeamWorkConfig.problem_id.in_(list(visible_problem_ids)))
+        ).all()
+        teamwork_problem_ids = set(team_problem_rows)
+
     # 3. 获取所有启用的学生 (排除测试账号和已删除账号)
     students = session.exec(select(Student).where(Student.enabled == True, Student.is_test == False, Student.is_deleted == False)).all()
     student_stats = {}
@@ -333,14 +736,39 @@ def get_total_ranking(session: Session):
             "last_update": None 
         }
 
-    # 4. 获取所有提交记录
-    attempts = session.exec(select(Attempt)).all()
-    
+    # 4. 获取并统计普通题提交记录
+    attempts = []
+    if visible_problem_ids:
+        attempts = session.exec(
+            select(Attempt).where(Attempt.problem_id.in_(list(visible_problem_ids)))
+        ).all()
+
     for a in attempts:
+        if a.problem_id in teamwork_problem_ids:
+            continue
         if a.student_id in student_stats:
             stats = student_stats[a.student_id]
-            if stats["last_update"] is None or a.updated_at > stats["last_update"]:
-                stats["last_update"] = a.updated_at
+            current_update = _ensure_utc_datetime(a.updated_at)
+            if current_update is not None and (stats["last_update"] is None or current_update > stats["last_update"]):
+                stats["last_update"] = current_update
+            if a.correct:
+                if (a.problem_id, a.input_id) in problem_scores:
+                    score = problem_scores[(a.problem_id, a.input_id)]
+                    stats["score"] += score
+
+    # 4.1 统计团队题提交记录
+    team_attempts = []
+    if teamwork_problem_ids:
+        team_attempts = session.exec(
+            select(TeamAttempt).where(TeamAttempt.problem_id.in_(list(teamwork_problem_ids)))
+        ).all()
+
+    for a in team_attempts:
+        if a.student_id in student_stats:
+            stats = student_stats[a.student_id]
+            current_update = _ensure_utc_datetime(a.updated_at)
+            if current_update is not None and (stats["last_update"] is None or current_update > stats["last_update"]):
+                stats["last_update"] = current_update
             if a.correct:
                 if (a.problem_id, a.input_id) in problem_scores:
                     score = problem_scores[(a.problem_id, a.input_id)]
@@ -365,7 +793,7 @@ def get_total_ranking(session: Session):
         
     def sort_key(item):
         score = item["score"]
-        dt = item["last_update"]
+        dt = _ensure_utc_datetime(item["last_update"])
         if dt is None:
             dt = datetime.max.replace(tzinfo=timezone.utc)
         return (-score, dt)

@@ -1,13 +1,25 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Header, Form
-from sqlmodel import Session, select
+from sqlmodel import Session, select, delete
 from pydantic import BaseModel
 from backend.db import engine
-from backend.models import Student, Attempt, ProblemState
+from backend.models import (
+    Student,
+    Attempt,
+    ProblemState,
+    TeamWorkConfig,
+    Team,
+    TeamMember,
+    TeamSubproblemClaim,
+    TeamAttempt,
+    TeamSubmission,
+)
 from backend.utils import get_stable_rng
 from backend.services.problems import (
     load_problem_script,
     PROBLEMS_DIR,
     get_problem_ranking,
+    get_teamwork_personal_ranking,
+    get_teamwork_team_ranking,
     get_total_ranking,
     ensure_meta_inputs,
     DEFAULT_MAX_ATTEMPTS,
@@ -51,6 +63,11 @@ class CreateStudentRequest(BaseModel):
     password: Optional[str] = None
     is_test: bool = False
 
+
+class TeamWorkConfigUpdate(BaseModel):
+    team_count: Optional[int] = None
+    team_size: Optional[int] = None
+
 def get_session():
     with Session(engine) as session:
         yield session
@@ -74,6 +91,58 @@ def verify_admin(
         return payload
         
     raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _extract_teamwork_meta(problem_id: str) -> dict:
+    script = load_problem_script(problem_id)
+    if not script or not hasattr(script, "meta"):
+        return {}
+
+    raw_meta = script.meta
+    if not isinstance(raw_meta, dict):
+        return {}
+
+    teamwork = raw_meta.get("teamwork", {})
+    if not isinstance(teamwork, dict):
+        return {}
+
+    return teamwork
+
+
+def _resolve_teamwork_numbers(problem_id: str, payload: TeamWorkConfigUpdate) -> tuple[int, int]:
+    teamwork_meta = _extract_teamwork_meta(problem_id)
+
+    team_count = payload.team_count if payload.team_count is not None else teamwork_meta.get("team_count")
+    team_size = payload.team_size if payload.team_size is not None else teamwork_meta.get("team_size")
+
+    if team_count is None or team_size is None:
+        raise HTTPException(
+            status_code=400,
+            detail="team_count/team_size missing: provide in request or script.meta.teamwork",
+        )
+
+    try:
+        team_count = int(team_count)
+        team_size = int(team_size)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="team_count/team_size must be integers")
+
+    if team_count <= 0 or team_size <= 0:
+        raise HTTPException(status_code=400, detail="team_count/team_size must be > 0")
+
+    return team_count, team_size
+
+
+def _has_teamwork_data(session: Session, problem_id: str) -> bool:
+    if session.exec(select(TeamMember.id).where(TeamMember.problem_id == problem_id)).first() is not None:
+        return True
+    if session.exec(select(TeamSubproblemClaim.id).where(TeamSubproblemClaim.problem_id == problem_id)).first() is not None:
+        return True
+    if session.exec(select(TeamAttempt.id).where(TeamAttempt.problem_id == problem_id)).first() is not None:
+        return True
+    if session.exec(select(TeamSubmission.id).where(TeamSubmission.problem_id == problem_id)).first() is not None:
+        return True
+    return False
 
 @router.post("/login")
 def admin_login(req: AdminLoginRequest):
@@ -239,6 +308,191 @@ def update_problem_state(
     return state
 
 
+@router.get('/teamwork/{problem_id}/config', dependencies=[Depends(verify_admin)])
+def get_teamwork_config(problem_id: str, session: Session = Depends(get_session)):
+    config = session.exec(
+        select(TeamWorkConfig).where(TeamWorkConfig.problem_id == problem_id)
+    ).first()
+
+    meta_teamwork = _extract_teamwork_meta(problem_id)
+
+    if not config:
+        return {
+            "problem_id": problem_id,
+            "configured": False,
+            "config": None,
+            "meta_teamwork": meta_teamwork,
+        }
+
+    return {
+        "problem_id": problem_id,
+        "configured": True,
+        "config": {
+            "team_count": config.team_count,
+            "team_size": config.team_size,
+            "subproblem_count": config.subproblem_count,
+            "updated_at": config.updated_at,
+        },
+        "meta_teamwork": meta_teamwork,
+    }
+
+
+@router.put('/teamwork/{problem_id}/config', dependencies=[Depends(verify_admin)])
+def upsert_teamwork_config(
+    problem_id: str,
+    payload: TeamWorkConfigUpdate,
+    session: Session = Depends(get_session),
+):
+    script = load_problem_script(problem_id)
+    if not script:
+        raise HTTPException(status_code=404, detail="Problem not found")
+
+    team_count, team_size = _resolve_teamwork_numbers(problem_id, payload)
+    subproblem_count = team_size
+
+    config = session.exec(
+        select(TeamWorkConfig).where(TeamWorkConfig.problem_id == problem_id)
+    ).first()
+
+    if not config:
+        config = TeamWorkConfig(
+            problem_id=problem_id,
+            team_count=team_count,
+            team_size=team_size,
+            subproblem_count=subproblem_count,
+        )
+        session.add(config)
+    else:
+        config.team_count = team_count
+        config.team_size = team_size
+        config.subproblem_count = subproblem_count
+        config.updated_at = datetime.now(timezone.utc)
+
+    session.commit()
+    session.refresh(config)
+
+    return {
+        "message": "Teamwork config saved",
+        "problem_id": problem_id,
+        "team_count": config.team_count,
+        "team_size": config.team_size,
+        "subproblem_count": config.subproblem_count,
+        "rule": "subproblem_count is fixed to team_size",
+    }
+
+
+@router.post('/teamwork/{problem_id}/init', dependencies=[Depends(verify_admin)])
+def init_teamwork_teams(
+    problem_id: str,
+    force_reset: bool = False,
+    session: Session = Depends(get_session),
+):
+    config = session.exec(
+        select(TeamWorkConfig).where(TeamWorkConfig.problem_id == problem_id)
+    ).first()
+    if not config:
+        raise HTTPException(status_code=400, detail="Teamwork config not found")
+
+    if _has_teamwork_data(session, problem_id) and not force_reset:
+        raise HTTPException(
+            status_code=409,
+            detail="Teamwork data exists. Use force_reset=true to reinitialize and clear old data.",
+        )
+
+    # Reinitialize as an idempotent operation.
+    session.exec(delete(TeamSubmission).where(TeamSubmission.problem_id == problem_id))
+    session.exec(delete(TeamAttempt).where(TeamAttempt.problem_id == problem_id))
+    session.exec(delete(TeamSubproblemClaim).where(TeamSubproblemClaim.problem_id == problem_id))
+    session.exec(delete(TeamMember).where(TeamMember.problem_id == problem_id))
+    session.exec(delete(Team).where(Team.problem_id == problem_id))
+
+    created = []
+    for no in range(1, config.team_count + 1):
+        team = Team(
+            problem_id=problem_id,
+            team_no=no,
+            name=f"第{no}队",
+            max_members=config.team_size,
+        )
+        session.add(team)
+        created.append({
+            "team_no": no,
+            "name": team.name,
+            "max_members": team.max_members,
+        })
+
+    session.commit()
+
+    return {
+        "message": "Teams initialized",
+        "problem_id": problem_id,
+        "team_count": config.team_count,
+        "team_size": config.team_size,
+        "teams": created,
+    }
+
+
+@router.get('/teamwork/{problem_id}/overview', dependencies=[Depends(verify_admin)])
+def get_teamwork_overview(problem_id: str, session: Session = Depends(get_session)):
+    config = session.exec(
+        select(TeamWorkConfig).where(TeamWorkConfig.problem_id == problem_id)
+    ).first()
+    teams = session.exec(
+        select(Team).where(Team.problem_id == problem_id).order_by(Team.team_no)
+    ).all()
+    members = session.exec(
+        select(TeamMember).where(TeamMember.problem_id == problem_id)
+    ).all()
+    claims = session.exec(
+        select(TeamSubproblemClaim).where(TeamSubproblemClaim.problem_id == problem_id)
+    ).all()
+
+    student_ids = list({m.student_id for m in members})
+    student_name_map = {}
+    if student_ids:
+        students = session.exec(select(Student).where(Student.student_id.in_(student_ids))).all()
+        student_name_map = {s.student_id: s.name for s in students}
+
+    claims_map = {}
+    for c in claims:
+        claims_map[(c.team_id, c.student_id)] = c.subproblem_no
+
+    members_by_team = {}
+    for m in members:
+        members_by_team.setdefault(m.team_id, []).append(m)
+
+    team_items = []
+    for t in teams:
+        team_members = members_by_team.get(t.id, [])
+        member_rows = []
+        for m in team_members:
+            member_rows.append({
+                "student_id": m.student_id,
+                "name": student_name_map.get(m.student_id, ""),
+                "joined_at": m.joined_at,
+                "claimed_subproblem": claims_map.get((t.id, m.student_id)),
+            })
+
+        team_items.append({
+            "team_id": t.id,
+            "team_no": t.team_no,
+            "name": t.name,
+            "max_members": t.max_members,
+            "member_count": len(member_rows),
+            "members": member_rows,
+        })
+
+    return {
+        "problem_id": problem_id,
+        "config": {
+            "team_count": config.team_count,
+            "team_size": config.team_size,
+            "subproblem_count": config.subproblem_count,
+        } if config else None,
+        "teams": team_items,
+    }
+
+
 @router.get("/students", dependencies=[Depends(verify_admin)])
 def list_students(deleted_only: bool = False, session: Session = Depends(get_session)):
     query = select(Student)
@@ -315,6 +569,15 @@ def get_student_progress_data(student_id: str, session: Session = Depends(get_se
     # 转为字典映射: (problem_id, input_id) -> Attempt对象
     attempts_map = {(a.problem_id, a.input_id): a for a in attempts}
 
+    team_attempts = session.exec(select(TeamAttempt).where(TeamAttempt.student_id == student_id)).all()
+    team_attempts_map = {(a.problem_id, a.input_id): a for a in team_attempts}
+
+    teamwork_problem_ids = set(
+        session.exec(
+            select(TeamWorkConfig.problem_id).where(TeamWorkConfig.problem_id.in_(problem_folders))
+        ).all()
+    )
+
     # Filter out deleted problems
     deleted_ids = session.exec(select(ProblemState.problem_id).where(ProblemState.is_deleted == True)).all()
     deleted_set = set(deleted_ids)
@@ -337,13 +600,14 @@ def get_student_progress_data(student_id: str, session: Session = Depends(get_se
         inputs_meta = meta.get('inputs', {})
         
         problem_inputs = {}
+        is_teamwork_problem = problem_id in teamwork_problem_ids
         
         for input_id in input_ids:
             config = inputs_meta.get(input_id, {})
             max_attempts = config.get('max_attempts', DEFAULT_MAX_ATTEMPTS)
             
             # Recalculate from map
-            arec = attempts_map.get((problem_id, input_id))
+            arec = team_attempts_map.get((problem_id, input_id)) if is_teamwork_problem else attempts_map.get((problem_id, input_id))
             
             problem_inputs[input_id] = {
                 'attempts': arec.attempts if arec else 0,
@@ -354,6 +618,7 @@ def get_student_progress_data(student_id: str, session: Session = Depends(get_se
         problems_data.append({
             'id': problem_id,
             'title': title,
+            'teamwork_enabled': is_teamwork_problem,
             'inputs': problem_inputs
         })
         
@@ -361,7 +626,50 @@ def get_student_progress_data(student_id: str, session: Session = Depends(get_se
 
 @router.post('/attempts/update', dependencies=[Depends(verify_admin)])
 def update_attempt(req: UpdateAttemptRequest, session: Session = Depends(get_session)):
-    # 查找记录
+    teamwork_config = session.exec(
+        select(TeamWorkConfig).where(TeamWorkConfig.problem_id == req.problem_id)
+    ).first()
+
+    if teamwork_config:
+        member = session.exec(
+            select(TeamMember).where(
+                TeamMember.problem_id == req.problem_id,
+                TeamMember.student_id == req.student_id,
+            )
+        ).first()
+        if not member:
+            raise HTTPException(status_code=404, detail='Team member not found for this student/problem')
+
+        attempt = session.exec(
+            select(TeamAttempt).where(
+                TeamAttempt.student_id == req.student_id,
+                TeamAttempt.problem_id == req.problem_id,
+                TeamAttempt.team_id == member.team_id,
+                TeamAttempt.input_id == req.input_id,
+            )
+        ).first()
+
+        if not attempt:
+            if req.attempts == 0 and not req.correct:
+                return {'message': 'No change needed'}
+
+            attempt = TeamAttempt(
+                student_id=req.student_id,
+                problem_id=req.problem_id,
+                team_id=member.team_id,
+                input_id=req.input_id,
+                attempts=req.attempts,
+                correct=req.correct,
+            )
+            session.add(attempt)
+        else:
+            attempt.attempts = req.attempts
+            attempt.correct = req.correct
+
+        session.commit()
+        return {'message': 'Updated successfully'}
+
+    # 普通题使用个人尝试记录
     attempt = session.exec(
         select(Attempt).where(
             Attempt.student_id == req.student_id,
@@ -369,13 +677,11 @@ def update_attempt(req: UpdateAttemptRequest, session: Session = Depends(get_ses
             Attempt.input_id == req.input_id
         )
     ).first()
-    
+
     if not attempt:
-        # 如果尝试次数为0且未正确，无需创建记录
         if req.attempts == 0 and not req.correct:
             return {'message': 'No change needed'}
-            
-        # 创建新记录
+
         attempt = Attempt(
             student_id=req.student_id,
             problem_id=req.problem_id,
@@ -387,7 +693,7 @@ def update_attempt(req: UpdateAttemptRequest, session: Session = Depends(get_ses
     else:
         attempt.attempts = req.attempts
         attempt.correct = req.correct
-        
+
     session.commit()
     return {'message': 'Updated successfully'}
 
@@ -434,7 +740,16 @@ def list_admin_problems(session: Session = Depends(get_session)):
     return problems
 
 @router.get('/problems/{problem_id}/ranking', dependencies=[Depends(verify_admin)])
-def get_admin_ranking(problem_id: str, session: Session = Depends(get_session)):
+def get_admin_ranking(problem_id: str, scope: str = "personal", session: Session = Depends(get_session)):
+    teamwork_config = session.exec(
+        select(TeamWorkConfig).where(TeamWorkConfig.problem_id == problem_id)
+    ).first()
+    if teamwork_config:
+        scope_norm = (scope or "personal").strip().lower()
+        if scope_norm in ("team", "group"):
+            return get_teamwork_team_ranking(session, problem_id)
+        return get_teamwork_personal_ranking(session, problem_id)
+
     return get_problem_ranking(session, problem_id)
 
 @router.get('/ranking', dependencies=[Depends(verify_admin)])

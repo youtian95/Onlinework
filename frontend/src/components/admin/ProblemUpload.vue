@@ -84,13 +84,23 @@ const handleFileChange = (e) => {
     successMessage.value = ''
 }
 
+const checkProblemExists = async (targetProblemId) => {
+    const res = await axios.get(`${API_BASE_URL}/admin/problems`, {
+        headers: { 'X-Admin-Token': props.adminToken }
+    })
+    return Array.isArray(res.data) && res.data.some(p => p.id === targetProblemId)
+}
+
 const uploadProblem = async () => {
     if (!canUpload.value) return
+    const normalizedProblemId = problemId.value.trim()
+    if (!normalizedProblemId) return
+
     uploading.value = true
     successMessage.value = ''
-    
+
     const formData = new FormData()
-    formData.append('problem_id', problemId.value)
+    formData.append('problem_id', normalizedProblemId)
     formData.append('main_script', mainScript.value)
     formData.append('main_md', mainMd.value)
     
@@ -99,16 +109,28 @@ const uploadProblem = async () => {
     })
     
     try {
+        const isDuplicateProblemId = await checkProblemExists(normalizedProblemId)
+        if (isDuplicateProblemId) {
+            const shouldOverwrite = window.confirm(
+                `题目ID「${normalizedProblemId}」已存在，继续上传将覆盖更新该题目。是否继续？`
+            )
+            if (!shouldOverwrite) {
+                return
+            }
+        }
+
         await axios.post(`${API_BASE_URL}/admin/problems/upload`, formData, {
             headers: { 
                 'X-Admin-Token': props.adminToken,
                 'Content-Type': 'multipart/form-data'
             }
         })
-        successMessage.value = `题目 ${problemId.value} 上传成功!`
+        successMessage.value = isDuplicateProblemId
+            ? `题目 ${normalizedProblemId} 已覆盖更新!`
+            : `题目 ${normalizedProblemId} 上传成功!`
         
         // Reset form
-        const createdProblemId = problemId.value
+        const createdProblemId = normalizedProblemId
         problemId.value = ''
         files.value = []
         mainScript.value = ''

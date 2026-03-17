@@ -34,6 +34,18 @@ def run_migrations():
                 conn.commit()
             print("Migration: Done.")
 
+    # 2. 检查 teamsubproblemclaim 表是否存在
+    if inspector.has_table("teamsubproblemclaim"):
+        columns = [col["name"] for col in inspector.get_columns("teamsubproblemclaim")]
+
+        # 迁移: 添加 switch_count 字段
+        if "switch_count" not in columns:
+            print("Migration: Adding 'switch_count' to 'teamsubproblemclaim' table...")
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE teamsubproblemclaim ADD COLUMN switch_count INTEGER DEFAULT 0"))
+                conn.commit()
+            print("Migration: Done.")
+
 
 def init_db():
     """

@@ -1,52 +1,105 @@
 <template>
   <div class="problem-container">
     <div class="nav-bar">
-        <button @click="router.push('/problems')" class="back-btn">← 返回列表</button>
-        <div class="nav-right">
-             <span class="score-badge" v-if="totalScore > 0 && studentId">当前得分: {{ currentScore }} / {{ totalScore }}</span>
-             <span class="user-badge">{{ studentId ? studentId : '游客' }}</span>
-        </div>
+      <button @click="router.push('/problems')" class="back-btn">← 返回列表</button>
+      <div class="nav-right">
+        <template v-if="teamworkEnabled && showProblemBody && token">
+          <span class="score-badge team">队伍得分: {{ teamCurrentScore }} / {{ totalScore }}</span>
+          <span v-if="myClaimTotalScore > 0" class="score-badge mine">我的子题: {{ myClaimScore }} / {{ myClaimTotalScore }}</span>
+          <span v-if="currentTeamLabel" class="team-badge">{{ currentTeamLabel }}</span>
+        </template>
+        <span v-else-if="totalScore > 0 && studentId" class="score-badge">当前得分: {{ personalCurrentScore }} / {{ totalScore }}</span>
+        <span class="user-badge">{{ studentId ? studentId : '游客' }}</span>
+      </div>
     </div>
 
-    <div v-if="loading">加载题目中...</div>
+    <div v-if="loading" class="loading-state">加载题目中...</div>
     <div v-else>
-        <!-- Terminated Banner -->
-        <div v-if="isTerminated" class="terminated-banner">
-             🛑 作业已截止 ({{ formatTime(deadline) }})，仅供查看，无法提交。
-        </div>
+      <div v-if="isTerminated" class="terminated-banner">
+        作业已截止 ({{ formatTime(deadline) }})，仅供查看，无法提交。
+      </div>
 
-        <div v-if="!studentId && !token" class="guest-banner">
-             👁️ 当前为游客浏览模式，无法提交答案。
-        </div>
+      <div v-if="!token" class="guest-banner">
+        当前为游客浏览模式，无法保存团队状态，也不能上传 PDF。
+      </div>
 
-        <!-- 题目动态渲染区域 -->
-        <div class="problem-content markdown-body" v-html="renderedContent"></div>
+      <div v-if="teamworkEnabled && token" class="team-panel-entry card-shell">
+        <div class="team-panel-entry-text">
+          <strong>{{ teamJoined ? '已加入队伍' : '尚未加入队伍' }}</strong>
+          <span>{{ teamJoined ? `当前队伍：${currentTeamLabel}` : '点击按钮选择队伍后才能开始作答' }}</span>
+        </div>
+        <button type="button" class="team-panel-open-btn" @click="showTeamPanel = true">
+          {{ teamJoined ? '查看队伍' : '选择队伍' }}
+        </button>
+      </div>
+
+      <div v-if="teamworkEnabled && token && !teamJoined" class="team-required-hint card-shell">
+        <h3>当前题目需要先加入队伍</h3>
+        <p>点击上方“选择队伍”按钮后会弹出队伍列表。</p>
+      </div>
+
+      <div v-if="teamworkEnabled && token && showTeamPanel" class="team-modal-overlay" @click.self="showTeamPanel = false">
+        <div class="team-modal-card">
+          <div class="team-modal-header">
+            <h3>队伍选择与成员查看</h3>
+            <button type="button" class="team-modal-close" @click="showTeamPanel = false">×</button>
+          </div>
+          <TeamSelectionPanel
+            :team-joined="teamJoined"
+            :team-info="teamInfo"
+            :team-config="teamConfig"
+            :team-rows="teamRows"
+            :my-claim-subproblem="myClaimSubproblem"
+            @join-team="joinTeam"
+          />
+        </div>
+      </div>
+
+      <template v-if="showProblemBody">
+        <ProblemSheet
+          ref="problemSheetRef"
+          :teamwork-enabled="teamworkEnabled"
+          :render-sequence="renderSequence"
+          :rendered-content="renderedContent"
+          :rendered-subproblems="renderedSubproblems"
+          :subproblem-map="subproblemMap"
+          :student-id="studentId"
+          :token="token"
+          :is-subproblem-open="isSubproblemOpen"
+          :get-subproblem-card-class="getSubproblemCardClass"
+          :get-subproblem-state-text="getSubproblemStateText"
+          :get-claim-button-kind="getClaimButtonKind"
+          :is-claim-button-disabled="isClaimButtonDisabled"
+          :get-claim-button-text="getClaimButtonText"
+          :get-claim-for-subproblem="getClaimForSubproblem"
+          @toggle-subproblem="toggleSubproblem"
+          @claim-subproblem="claimSubproblem"
+        />
 
         <div class="actions" v-if="!isTerminated">
-             <div v-if="token" class="pdf-upload-panel">
-                <label class="pdf-upload-label" for="pdf-upload-input">作业 PDF：</label>
-                <input
-                    id="pdf-upload-input"
-                    ref="pdfInputRef"
-                    class="pdf-upload-input"
-                    type="file"
-                    accept="application/pdf,.pdf"
-                    @change="onPdfFileChange"
-                >
-                <button class="pdf-upload-btn" type="button" @click="uploadPdf" :disabled="!selectedPdfFile || uploadingPdf">
-                    {{ uploadingPdf ? '上传中...' : '上传 PDF' }}
-                </button>
-                <div class="pdf-upload-status">
-                    <span v-if="selectedPdfName">待上传：{{ selectedPdfName }}</span>
-                    <span v-else-if="hasUploadedPdf">已保存：{{ uploadedPdfName || '已上传 PDF' }}</span>
-                    <span v-else>可选：上传作业 PDF（与答题提交分开）</span>
-                </div>
-             </div>
+          <div v-if="token" class="pdf-upload-panel">
+            <label class="pdf-upload-label" for="pdf-upload-input">作业 PDF：</label>
+            <input
+              id="pdf-upload-input"
+              ref="pdfInputRef"
+              class="pdf-upload-input"
+              type="file"
+              accept="application/pdf,.pdf"
+              @change="onPdfFileChange"
+            >
+            <button class="pdf-upload-btn" type="button" @click="uploadPdf" :disabled="!selectedPdfFile || uploadingPdf">
+              {{ uploadingPdf ? '上传中...' : '上传 PDF' }}
+            </button>
+            <div class="pdf-upload-status">
+              <span v-if="selectedPdfName">待上传：{{ selectedPdfName }}</span>
+              <span v-else-if="hasUploadedPdf">已保存：{{ uploadedPdfName || '已上传 PDF' }}</span>
+              <span v-else>上传答题计算过程 PDF 文件</span>
+            </div>
+          </div>
 
-            <!-- 整体提交按钮已废弃，改为单个输入框回车提交 -->
-            <!-- <button class="submit-btn" @click="submitAnswers">提交答案</button> -->
-             <div class="hint-text">💡 提示：输入答案后按 <b>Enter</b> 键提交单个空</div>
+          <div class="hint-text">{{ hintText }}</div>
         </div>
+      </template>
     </div>
   </div>
 </template>
@@ -57,28 +110,25 @@ import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import { marked } from 'marked'
 import markedKatex from 'marked-katex-extension'
+import TeamSelectionPanel from '../components/student/TeamSelectionPanel.vue'
+import ProblemSheet from '../components/student/ProblemSheet.vue'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
-// 引入 Katex 样式，实际项目中需要在 index.html 或全局 CSS 引入
-// 这里假设已经在 index.html 引入或者忽略样式问题先跑通功能
-
-// 使用 marked 的 KaTeX 插件处理公式
-// strict: "ignore" 允许 \htmlId 等 HTML 扩展
 marked.use(markedKatex({ throwOnError: false, trust: true, strict: 'ignore' }))
 
 const route = useRoute()
 const router = useRouter()
-const studentId = localStorage.getItem('studentId')
-const token = localStorage.getItem('studentToken')
+const studentId = localStorage.getItem('studentId') || ''
+const token = localStorage.getItem('studentToken') || ''
 const problemId = route.params.id
 
 const loading = ref(true)
-const rawContent = ref('')
-const inputIds = ref([])
 const renderedContent = ref('')
+const renderedSubproblems = ref([])
+const renderSequence = ref([])
+const inputIds = ref([])
 const userAnswers = ref({})
-const result = ref(null)
 const attemptStatus = ref({})
 const meta = ref({})
 const isTerminated = ref(false)
@@ -89,754 +139,1132 @@ const uploadedPdfName = ref('')
 const hasUploadedPdf = ref(false)
 const pdfInputRef = ref(null)
 const uploadingPdf = ref(false)
+const teamworkEnabled = ref(false)
+const teamJoined = ref(false)
+const teamInfo = ref(null)
+const teamConfig = ref(null)
+const teamRows = ref([])
+const teamClaims = ref([])
+const myClaimSubproblem = ref(null)
+const openSubproblems = ref([])
+const problemSheetRef = ref(null)
+const showTeamPanel = ref(false)
+let bindScheduled = false
 
 const metaInputs = computed(() => {
-    const inputs = meta.value?.inputs
-    if (!inputs || Array.isArray(inputs)) return {}
-    return inputs
+  const inputs = meta.value?.inputs
+  if (!inputs || Array.isArray(inputs)) return {}
+  return inputs
 })
 
-const formatTime = (iso) => new Date(iso).toLocaleString()
+const uniqueInputIds = computed(() => [...new Set(inputIds.value)])
 
 const totalScore = computed(() => {
-    // 应该只考虑唯一的 input_ids
-    const uniqueIds = inputIds.value
-    if (!uniqueIds.length) return 0
-    return uniqueIds.reduce((sum, id) => {
-        const item = metaInputs.value[id]
-        return sum + (item?.score ?? 1)
-    }, 0)
+  if (!uniqueInputIds.value.length) return 0
+  return uniqueInputIds.value.reduce((sum, id) => sum + (metaInputs.value[id]?.score ?? 1), 0)
 })
 
-const currentScore = computed(() => {
-    const uniqueIds = inputIds.value
-    if (!uniqueIds.length) return 0
-    let score = 0
-    // attemptStatus key corresponds to input id
-    for (const [id, status] of Object.entries(attemptStatus.value)) {
-        if (uniqueIds.includes(id) && status.correct) {
-            const item = metaInputs.value[id]
-            score += (item?.score ?? 1)
-        }
+const teamCurrentScore = computed(() => {
+  return uniqueInputIds.value.reduce((sum, id) => {
+    if (!attemptStatus.value[id]?.correct) return sum
+    return sum + (metaInputs.value[id]?.score ?? 1)
+  }, 0)
+})
+
+const myClaimBlock = computed(() => {
+  return renderedSubproblems.value.find((block) => block.subproblem_no === myClaimSubproblem.value) || null
+})
+
+const myClaimTotalScore = computed(() => {
+  if (!myClaimBlock.value) return 0
+  return myClaimBlock.value.input_ids.reduce((sum, id) => sum + (metaInputs.value[id]?.score ?? 1), 0)
+})
+
+const myClaimScore = computed(() => {
+  if (!myClaimBlock.value) return 0
+  return myClaimBlock.value.input_ids.reduce((sum, id) => {
+    if (!attemptStatus.value[id]?.correct) return sum
+    return sum + (metaInputs.value[id]?.score ?? 1)
+  }, 0)
+})
+
+const personalCurrentScore = computed(() => {
+  if (teamworkEnabled.value) {
+    return myClaimScore.value
+  }
+  return teamCurrentScore.value
+})
+
+const currentTeamLabel = computed(() => {
+  if (!teamInfo.value) return ''
+  if (teamInfo.value.team_name) return teamInfo.value.team_name
+  if (teamInfo.value.team_no) return `第 ${teamInfo.value.team_no} 队`
+  return '已入队'
+})
+
+const teamClaimMap = computed(() => {
+  const claimMap = {}
+  for (const claim of teamClaims.value) {
+    claimMap[claim.subproblem_no] = claim
+  }
+  return claimMap
+})
+
+const subproblemMap = computed(() => {
+  const mapping = {}
+  for (const block of renderedSubproblems.value) {
+    mapping[block.subproblem_no] = block
+  }
+  return mapping
+})
+
+const showProblemBody = computed(() => !teamworkEnabled.value || !token || teamJoined.value)
+
+const hintText = computed(() => {
+  if (!token) {
+    return '提示：游客模式下按 Enter 可以即时校验，但不会保存团队状态。'
+  }
+  if (teamworkEnabled.value && !myClaimSubproblem.value) {
+    return '提示：先认领一个子问题，再在自己负责的区域内按 Enter 提交单个输入框。'
+  }
+  if (teamworkEnabled.value) {
+    return '提示：只能修改自己认领的区域；队友的结果会同步展示为只读。'
+  }
+  return '提示：输入答案后按 Enter 键提交单个输入框。'
+})
+
+const formatTime = (iso) => (iso ? new Date(iso).toLocaleString() : '-')
+
+const authConfig = () => {
+  if (!token) return {}
+  return { headers: { Authorization: `Bearer ${token}` } }
+}
+
+const handleAuthExpired = () => {
+  localStorage.removeItem('studentToken')
+  localStorage.removeItem('studentId')
+  localStorage.removeItem('studentName')
+  router.push('/')
+}
+
+const persistTeamMembership = (team) => {
+  const raw = localStorage.getItem('problemTeamMemberships')
+  let mapping = {}
+  if (raw) {
+    try {
+      mapping = JSON.parse(raw)
+    } catch {
+      mapping = {}
     }
-    return score
-})
+  }
+  mapping[String(problemId)] = {
+    team_no: team?.team_no ?? null,
+    team_name: team?.team_name ?? null,
+  }
+  localStorage.setItem('problemTeamMemberships', JSON.stringify(mapping))
+}
 
-// 前端组件化核心黑科技：
-// 后端返回的是 <problem-input id="ans_1"></problem-input>
-// 我们在 mounted 后，手动把这些 tag 替换成真的 input 框
-// 并且绑定事件
+const clearTeamMembership = () => {
+  const raw = localStorage.getItem('problemTeamMemberships')
+  if (!raw) return
+  try {
+    const mapping = JSON.parse(raw)
+    delete mapping[String(problemId)]
+    localStorage.setItem('problemTeamMemberships', JSON.stringify(mapping))
+  } catch {
+    localStorage.removeItem('problemTeamMemberships')
+  }
+}
+
+const createRenderer = () => {
+  const renderer = new marked.Renderer()
+  const originalImage = renderer.image.bind(renderer)
+  renderer.image = (href, title, text) => {
+    if (href && !href.startsWith('http') && !href.startsWith('//') && !href.startsWith('data:')) {
+      const cleanHref = href.startsWith('/') ? href.slice(1) : href
+      return originalImage(`${API_BASE_URL}/problems/${problemId}/${cleanHref}`, title, text)
+    }
+    return originalImage(href, title, text)
+  }
+  return renderer
+}
+
+const renderMarkdown = (source = '') => {
+  return marked.parse(source, { renderer: createRenderer() })
+}
+
+const scheduleBindInputs = () => {
+  if (bindScheduled) return
+  bindScheduled = true
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      bindScheduled = false
+      bindInputs()
+    })
+  })
+}
+
+const setDefaultOpenSubproblems = () => {
+  if (!renderedSubproblems.value.length) {
+    openSubproblems.value = []
+    return
+  }
+  if (teamworkEnabled.value && myClaimSubproblem.value) {
+    openSubproblems.value = [myClaimSubproblem.value]
+    return
+  }
+  if (teamworkEnabled.value) {
+    openSubproblems.value = []
+    return
+  }
+  openSubproblems.value = []
+}
+
+const hydrateProblemData = async (data) => {
+  renderedContent.value = renderMarkdown(data.content || '')
+  renderedSubproblems.value = (data.subproblems || []).map((block) => ({
+    ...block,
+    html: renderMarkdown(block.content || ''),
+  }))
+  renderSequence.value = (data.render_sequence || []).map((segment, index) => {
+    if (segment.type === 'plain') {
+      return {
+        key: `plain-${index}`,
+        type: 'plain',
+        html: renderMarkdown(segment.content || ''),
+      }
+    }
+    return {
+      key: `sub-${segment.subproblem_no}-${index}`,
+      type: 'subproblem',
+      subproblem_no: segment.subproblem_no,
+    }
+  })
+  inputIds.value = [...new Set(data.input_ids || [])]
+  attemptStatus.value = data.attempt_status || {}
+  meta.value = data.meta || {}
+  isTerminated.value = !!data.is_terminated
+  deadline.value = data.deadline
+  hasUploadedPdf.value = !!data.pdf_uploaded
+  uploadedPdfName.value = data.pdf_filename || ''
+  teamworkEnabled.value = !!data.teamwork_enabled || teamworkEnabled.value
+  if (teamworkEnabled.value) {
+    teamClaims.value = data.team_claims || []
+    myClaimSubproblem.value = data.my_claim_subproblem ?? null
+  } else {
+    teamClaims.value = []
+    myClaimSubproblem.value = null
+  }
+  setDefaultOpenSubproblems()
+  scheduleBindInputs()
+}
+
+const loadTeamState = async () => {
+  if (!token) return null
+  const res = await axios.get(`${API_BASE_URL}/problems/${problemId}/team/me`, authConfig())
+  teamworkEnabled.value = !!res.data?.teamwork_enabled
+  teamJoined.value = !!res.data?.joined
+  teamInfo.value = res.data?.team || null
+  if (teamJoined.value && teamInfo.value) {
+    persistTeamMembership(teamInfo.value)
+  } else if (teamworkEnabled.value) {
+    clearTeamMembership()
+  }
+  return res.data
+}
+
+const loadTeams = async () => {
+  if (!token || !teamworkEnabled.value) return
+  const res = await axios.get(`${API_BASE_URL}/problems/${problemId}/teams`, authConfig())
+  teamRows.value = res.data?.teams || []
+  teamConfig.value = res.data?.config || null
+}
+
+const loadProblem = async () => {
+  const res = await axios.get(`${API_BASE_URL}/problems/${problemId}`, authConfig())
+  await hydrateProblemData(res.data)
+}
+
+const loadPage = async () => {
+  loading.value = true
+  try {
+    if (token) {
+      const teamState = await loadTeamState()
+      if (teamState?.teamwork_enabled) {
+        await loadTeams()
+        if (!teamState.joined) {
+          return
+        }
+      }
+    }
+    await loadProblem()
+  } catch (e) {
+    if (e.response?.status === 401) {
+      alert('登录已过期或未授权')
+      handleAuthExpired()
+      return
+    }
+    if (e.response?.status === 403 && e.response?.data?.detail === 'Team selection required') {
+      teamworkEnabled.value = true
+      teamJoined.value = false
+      await loadTeams()
+      return
+    }
+    if (e.response?.status === 403) {
+      alert('题目未发布或无权限访问')
+      router.push('/problems')
+      return
+    }
+    if (e.response?.status === 404) {
+      alert('题目不存在')
+      router.push('/problems')
+      return
+    }
+    alert('加载题目失败:' + (e.response?.data?.detail || e.message))
+  } finally {
+    loading.value = false
+  }
+}
 
 onMounted(async () => {
-    // Guest allowed
-    
-    try {
-        const config = {}
-        if (token) {
-            config.headers = { Authorization: `Bearer ${token}` }
-        }
-    
-        const res = await axios.get(`${API_BASE_URL}/problems/${problemId}`, config)
-        const data = res.data
-        
-        // 1. 渲染 Markdown -> HTML (包含数学公式)
-        
-        // 自定义 renderer 用于重写图片路径
-        const renderer = new marked.Renderer()
-        const originalImage = renderer.image.bind(renderer)
-        renderer.image = (href, title, text) => {
-            // 如果是相对路径，添加 API Base URL 前缀
-            if (href && !href.startsWith('http') && !href.startsWith('//') && !href.startsWith('data:')) {
-                // Remove leading slash if present to avoid double slashes
-                const cleanHref = href.startsWith('/') ? href.slice(1) : href
-                const newHref = `${API_BASE_URL}/problems/${problemId}/${cleanHref}`
-                return originalImage(newHref, title, text)
-            }
-            return originalImage(href, title, text)
-        }
-        
-        marked.use({ renderer })
-        
-        let html = marked.parse(data.content)
-
-        rawContent.value = html
-        // 这里直接取所有的唯一 id，因为如果是数组的话在前端做排重处理，确保 inputIds.value 中的元素都是唯一的
-        inputIds.value = [...new Set(data.input_ids)]
-        attemptStatus.value = data.attempt_status || {}
-        meta.value = data.meta || {}
-        isTerminated.value = data.is_terminated || false
-        deadline.value = data.deadline
-        hasUploadedPdf.value = !!data.pdf_uploaded
-        uploadedPdfName.value = data.pdf_filename || ''
-        
-        // 2. 注入 HTML 并挂载 Inputs
-        renderedContent.value = html
-        
-        // 先显示内容
-        loading.value = false
-
-        // 等待 DOM 更新后绑定 Input
-        nextTick(() => {
-            bindInputs() 
-        })
-        
-    } catch (e) {
-        console.error(e)
-        if (e.response && e.response.status === 403) {
-            alert('题目未发布或无权限访问')
-            router.push('/problems')
-        } else if (e.response && e.response.status === 404) {
-            alert('题目不存在')
-            router.push('/problems')
-        } else {
-             // alert('该学号未被授权进入系统') // Keep original error handling style or improve
-             alert('加载题目失败:' + (e.response?.data?.detail || e.message))
-        }
-    } finally {
-        loading.value = false
-    }
+  await loadPage()
 })
 
+const isSubproblemOpen = (subproblemNo) => openSubproblems.value.includes(subproblemNo)
+
+const toggleSubproblem = async (subproblemNo) => {
+  if (isSubproblemOpen(subproblemNo)) {
+    openSubproblems.value = openSubproblems.value.filter((item) => item !== subproblemNo)
+    return
+  }
+  openSubproblems.value = [...openSubproblems.value, subproblemNo]
+  scheduleBindInputs()
+}
+
+const getClaimForSubproblem = (subproblemNo) => teamClaimMap.value[subproblemNo] || null
+
+const getSubproblemCardClass = (block) => {
+  const claim = getClaimForSubproblem(block.subproblem_no)
+  return {
+    mine: claim?.student_id === studentId,
+    locked: !!claim && claim.student_id !== studentId,
+    open: isSubproblemOpen(block.subproblem_no),
+  }
+}
+
+const getSubproblemStateText = (block) => {
+  const claim = getClaimForSubproblem(block.subproblem_no)
+  if (!claim) return '未认领'
+  if (claim.student_id === studentId) return '你正在负责'
+  return `${claim.name || claim.student_id} 负责中`
+}
+
+const getClaimButtonText = (block) => {
+  const claim = getClaimForSubproblem(block.subproblem_no)
+  if (!teamJoined.value) return '先选队'
+  if (!claim) return '认领'
+  if (claim.student_id === studentId) return '已认领'
+  return '已被占用'
+}
+
+const getClaimButtonKind = (block) => {
+  const claim = getClaimForSubproblem(block.subproblem_no)
+  if (!claim) return 'primary'
+  if (claim.student_id === studentId) return 'secondary'
+  return 'disabled'
+}
+
+const isClaimButtonDisabled = (block) => {
+  if (!token || !teamJoined.value) return true
+  const claim = getClaimForSubproblem(block.subproblem_no)
+  return !!claim
+}
+
+const buildTeamSwitchConfirm = (detail) => {
+  const fromText = detail?.current_team_no ? `第 ${detail.current_team_no} 队` : '当前队伍'
+  const toText = detail?.target_team_no ? `第 ${detail.target_team_no} 队` : '目标队伍'
+  return `从 ${fromText} 切换到 ${toText} 会清空你在这道题里的认领、作答和 PDF 记录，继续吗？`
+}
+
+const buildClaimSwitchConfirm = (detail) => {
+  const fromText = detail?.current_subproblem_no ? `子题 ${detail.current_subproblem_no}` : '当前子题'
+  const toText = detail?.target_subproblem_no ? `子题 ${detail.target_subproblem_no}` : '目标子题'
+  return `从 ${fromText} 切换到 ${toText} 会清空你之前的提交记录。注意：每道团队题只能切换一次认领，本次确认会消耗这次切换机会，继续吗？`
+}
+
+const joinTeam = async (teamNo, forceSwitch = false) => {
+  try {
+    const res = await axios.post(
+      `${API_BASE_URL}/problems/${problemId}/team/join`,
+      { team_no: teamNo, force_switch: forceSwitch },
+      authConfig(),
+    )
+    teamJoined.value = true
+    teamInfo.value = {
+      team_no: res.data.team_no,
+      team_name: res.data.team_name,
+    }
+    showTeamPanel.value = false
+    persistTeamMembership(teamInfo.value)
+    await loadTeams()
+    await loadProblem()
+  } catch (e) {
+    if (e.response?.status === 401) {
+      alert('登录已过期或未授权')
+      handleAuthExpired()
+      return
+    }
+    if (e.response?.status === 409 && e.response?.data?.detail?.requires_confirmation) {
+      if (window.confirm(buildTeamSwitchConfirm(e.response.data.detail))) {
+        await joinTeam(teamNo, true)
+      }
+      return
+    }
+    alert(e.response?.data?.detail?.message || e.response?.data?.detail || '加入队伍失败')
+  }
+}
+
+const claimSubproblem = async (subproblemNo, forceSwitch = false) => {
+  if (!token || !teamJoined.value) return
+
+  if (!forceSwitch && myClaimSubproblem.value && myClaimSubproblem.value !== subproblemNo) {
+    const shouldSwitch = window.confirm(
+      buildClaimSwitchConfirm({
+        current_subproblem_no: myClaimSubproblem.value,
+        target_subproblem_no: subproblemNo,
+      }),
+    )
+    if (!shouldSwitch) return
+    forceSwitch = true
+  }
+
+  try {
+    const res = await axios.post(
+      `${API_BASE_URL}/problems/${problemId}/team/claim`,
+      { subproblem_no: subproblemNo, force_switch: forceSwitch },
+      authConfig(),
+    )
+    myClaimSubproblem.value = res.data.subproblem_no
+    await loadProblem()
+  } catch (e) {
+    const detail = e.response?.data?.detail
+    if (e.response?.status === 401) {
+      alert('登录已过期或未授权')
+      handleAuthExpired()
+      return
+    }
+    if (e.response?.status === 409 && detail?.requires_confirmation) {
+      if (window.confirm(buildClaimSwitchConfirm(detail))) {
+        await claimSubproblem(subproblemNo, true)
+      }
+      return
+    }
+    if (e.response?.status === 409 && detail?.message === 'Subproblem switch limit reached') {
+      alert('认领只能切换一次，你已用完切换次数。')
+      return
+    }
+    alert(detail?.message || detail || '认领子题失败')
+  }
+}
+
 const onPdfFileChange = (event) => {
-    const file = event?.target?.files?.[0]
-    if (!file) {
-        selectedPdfFile.value = null
-        selectedPdfName.value = ''
-        return
+  const file = event?.target?.files?.[0]
+  if (!file) {
+    selectedPdfFile.value = null
+    selectedPdfName.value = ''
+    return
+  }
+
+  const lowerName = (file.name || '').toLowerCase()
+  const contentType = (file.type || '').toLowerCase()
+  const isPdf = lowerName.endsWith('.pdf') || contentType === 'application/pdf'
+
+  if (!isPdf) {
+    alert('仅支持上传 PDF 文件。')
+    if (pdfInputRef.value) {
+      pdfInputRef.value.value = ''
     }
+    selectedPdfFile.value = null
+    selectedPdfName.value = ''
+    return
+  }
 
-    const lowerName = (file.name || '').toLowerCase()
-    const contentType = (file.type || '').toLowerCase()
-    const isPdf = lowerName.endsWith('.pdf') || contentType === 'application/pdf'
-
-    if (!isPdf) {
-        alert('仅支持上传 PDF 文件。')
-        if (pdfInputRef.value) {
-            pdfInputRef.value.value = ''
-        }
-        selectedPdfFile.value = null
-        selectedPdfName.value = ''
-        return
-    }
-
-    selectedPdfFile.value = file
-    selectedPdfName.value = file.name
+  selectedPdfFile.value = file
+  selectedPdfName.value = file.name
 }
 
 const uploadPdf = async () => {
-    if (!token) return
-    if (!selectedPdfFile.value) {
-        alert('请先选择一个 PDF 文件。')
-        return
+  if (!token) return
+  if (!selectedPdfFile.value) {
+    alert('请先选择一个 PDF 文件。')
+    return
+  }
+
+  try {
+    uploadingPdf.value = true
+    const formData = new FormData()
+    formData.append('pdf', selectedPdfFile.value)
+
+    const res = await axios.post(
+      `${API_BASE_URL}/problems/${problemId}/pdf`,
+      formData,
+      authConfig(),
+    )
+
+    hasUploadedPdf.value = !!res.data?.pdf_uploaded
+    uploadedPdfName.value = res.data?.pdf_filename || selectedPdfName.value
+    selectedPdfFile.value = null
+    selectedPdfName.value = ''
+    if (pdfInputRef.value) {
+      pdfInputRef.value.value = ''
     }
-
-    try {
-        uploadingPdf.value = true
-        const formData = new FormData()
-        formData.append('pdf', selectedPdfFile.value)
-
-        const res = await axios.post(
-            `${API_BASE_URL}/problems/${problemId}/pdf`,
-            formData,
-            { headers: { Authorization: `Bearer ${token}` } }
-        )
-
-        hasUploadedPdf.value = !!res.data?.pdf_uploaded
-        uploadedPdfName.value = res.data?.pdf_filename || selectedPdfName.value
-        selectedPdfFile.value = null
-        selectedPdfName.value = ''
-        if (pdfInputRef.value) {
-            pdfInputRef.value.value = ''
-        }
-        alert('PDF 上传成功。')
-    } catch (e) {
-        if (e.response && (e.response.status === 403 || e.response.status === 401)) {
-            alert('登录已过期或未授权')
-            localStorage.removeItem('studentToken')
-            router.push('/')
-        } else {
-            alert(e.response?.data?.detail || 'PDF 上传失败')
-        }
-    } finally {
-        uploadingPdf.value = false
+    alert('PDF 上传成功。')
+  } catch (e) {
+    if (e.response?.status === 401 || e.response?.status === 403) {
+      alert(e.response?.data?.detail || '登录已过期或未授权')
+      if (e.response?.status === 401) {
+        handleAuthExpired()
+      }
+    } else {
+      alert(e.response?.data?.detail || 'PDF 上传失败')
     }
+  } finally {
+    uploadingPdf.value = false
+  }
 }
 
-// 绑定自定义标签为真实输入框，并实现双向绑定
 const bindInputs = () => {
-    // 简化处理逻辑：直接查找所有占位符并替换
-    const placeholders = document.querySelectorAll('.problem-input-placeholder')
-    
-    placeholders.forEach(ph => {
-        // 防止重复处理
-        if (ph.dataset.processed) return
-        
-        let id = ph.id
-        // 如果没有 ID，或者 ID 不在已知的 inputIds 列表中，则尝试寻找父容器的 dataset 或 id
-        // 这里只是为了兼容性，如果后端生成逻辑一致，应该都有 ID
-        if (!id) {
-             const parentWithId = ph.closest('[id]')
-             if (parentWithId) id = parentWithId.id
-        }
-
-        if (id && inputIds.value.includes(id)) {
-             processPlaceholder(ph, id)
-        }
-    })
+  const sheetRef = problemSheetRef.value
+  const sheetRoot = typeof sheetRef?.getRootEl === 'function' ? sheetRef.getRootEl() : sheetRef
+  if (sheetRoot) {
+    bindInputsInContainer(sheetRoot)
+  }
+  applyAttemptStatusToInputs(attemptStatus.value)
 }
 
-const processPlaceholder = (ph, id) => {
-    if (ph.dataset.processed) return
-    ph.dataset.processed = 'true'
-
-    const status = attemptStatus.value[id] || { remaining: 0, locked: false, correct: false }
-    
-    // 创建真实 Input
-    const input = document.createElement('input')
-    input.type = 'text'
-    input.className = 'problem-input-field'
-    
-    // Logic for disabled state
-    const isLocallyLocked = status.locked || status.correct
-    const isGloballyLocked = isTerminated.value
-    
-    if (!studentId && !token) {
-            input.placeholder = '按回车验证'
-            input.disabled = false
-    } else if (isGloballyLocked) {
-            input.placeholder = '已截止'
-            input.disabled = true
-            input.classList.add('terminated')
-    } else if (status.correct) {
-            input.placeholder = '已正确'
-            input.disabled = true
-    } else if (status.locked) {
-            input.placeholder = '已锁定'
-            input.disabled = true
-    } else {
-            input.placeholder = '请输入答案'
-            input.disabled = false
+const bindInputsInContainer = (container) => {
+  if (!container || typeof container.querySelectorAll !== 'function') return
+  const placeholders = container.querySelectorAll('.problem-input-placeholder')
+  placeholders.forEach((placeholder) => {
+    if (placeholder.dataset.processed) return
+    const id = placeholder.id
+    if (id && uniqueInputIds.value.includes(id)) {
+      processPlaceholder(placeholder, id)
     }
-    
-    // 双向绑定逻辑 (模拟 v-model)
-    // 注意：如果页面有多个相同 id 的输入框，这会把它们都设为同一个值
-    // 但我们的 userAnswers 只有一份数据，所以这是对的
-    input.value = status.last_answer || userAnswers.value[id] || ''
-    
-    // 只有当这是第一次加载且 input 为空时，我们才不去覆盖 userAnswers
-    // 否则我们需要保证 userAnswers 与 input 同步
-    if (input.value && !userAnswers.value[id]) {
-        userAnswers.value[id] = input.value
-    }
-    
-    input.oninput = (e) => {
-        const val = e.target.value
-        userAnswers.value[id] = val
-        // 同步其他相同 id 的输入框
-        const allInputs = document.querySelectorAll(`.problem-input-field[data-id="${id}"]`)
-        allInputs.forEach(inp => {
-            if (inp !== input) {
-                inp.value = val
-            }
-        })
-    }
-    
-    // 绑定回车事件
-    input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            submitSingleAnswer(id)
-        }
-    })
-    
-    // 保存 ID 到 dataset 以便后续查找
-    input.dataset.id = id
-
-    // 状态提示
-    const info = document.createElement('span')
-    info.className = 'attempt-info'
-    info.dataset.id = id
-    
-    if (!studentId && !token) {
-            info.textContent = '游客验证'
-    } else {
-            info.textContent = status.correct
-            ? '已正确'
-            : (status.locked ? '已锁定' : `剩余 ${status.remaining} 次`)
-    }
-
-    // 包装并替换 DOM
-    const wrapper = document.createElement('span')
-    wrapper.className = 'input-wrapper'
-    wrapper.appendChild(input)
-    wrapper.appendChild(info)
-    
-    // 如果 ph 是 span，可以直接 replaceWith
-    // 如果 ph 是 div (KaTeX 有时会用 div 块级)，可能需要考虑布局
-    // 但大多数 math 内联公式都是 span
-    ph.replaceWith(wrapper)
+  })
 }
 
-// 根据尝试状态更新输入框状态
+const getInputPlaceholder = (status) => {
+  if (!token) return '按回车验证'
+  if (isTerminated.value) return '已截止'
+  if (teamworkEnabled.value) {
+    if (!status.owner_student_id) return '未认领'
+    if (!status.editable) return '队友负责'
+  }
+  if (status.correct) return '已正确'
+  if (status.locked) return '已锁定'
+  return '请输入答案'
+}
+
+const getInputStatusText = (status) => {
+  if (!token) return '游客验证'
+  if (teamworkEnabled.value) {
+    if (!status.owner_student_id) return '未认领'
+    if (!status.editable) return `队友 ${status.owner_student_id} 负责`
+  }
+  if (status.correct) return '已正确'
+  if (status.locked) return '已锁定'
+  return `剩余 ${status.remaining} 次`
+}
+
+const resolveInputDisabled = (status) => {
+  if (!token) return false
+  if (isTerminated.value) return true
+  if (teamworkEnabled.value) {
+    if (!status.owner_student_id) return true
+    if (!status.editable) return true
+  }
+  return status.correct || status.locked
+}
+
+const processPlaceholder = (placeholder, id) => {
+  placeholder.dataset.processed = 'true'
+  const status = attemptStatus.value[id] || {
+    remaining: 0,
+    locked: false,
+    correct: false,
+    editable: !teamworkEnabled.value,
+    owner_student_id: null,
+    last_answer: '',
+  }
+
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.className = 'problem-input-field'
+  input.dataset.id = id
+  input.placeholder = getInputPlaceholder(status)
+  input.disabled = resolveInputDisabled(status)
+  input.value = status.last_answer || userAnswers.value[id] || ''
+
+  if (input.value && !userAnswers.value[id]) {
+    userAnswers.value[id] = input.value
+  }
+
+  input.oninput = (event) => {
+    const nextValue = event.target.value
+    userAnswers.value[id] = nextValue
+    document.querySelectorAll(`.problem-input-field[data-id="${id}"]`).forEach((otherInput) => {
+      if (otherInput !== input) {
+        otherInput.value = nextValue
+      }
+    })
+  }
+
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      submitSingleAnswer(id)
+    }
+  })
+
+  const info = document.createElement('span')
+  info.className = 'attempt-info'
+  info.dataset.id = id
+  info.textContent = getInputStatusText(status)
+
+  const wrapper = document.createElement('span')
+  wrapper.className = 'input-wrapper'
+  wrapper.appendChild(input)
+  wrapper.appendChild(info)
+  placeholder.replaceWith(wrapper)
+}
+
 const applyAttemptStatusToInputs = (statusMap) => {
-    const inputs = document.querySelectorAll('.problem-input-field')
-    inputs.forEach(input => {
-        const id = input.dataset.id
-        const status = statusMap[id]
-        if (!status) return
+  document.querySelectorAll('.problem-input-field').forEach((input) => {
+    const id = input.dataset.id
+    const status = statusMap[id]
+    if (!status) return
 
-        input.disabled = status.locked || status.correct
-        input.placeholder = status.locked ? '已锁定' : '请输入答案'
-        
-        // 只有当有 last_answer 或者原来没有输入过的时候，才去覆盖它的值，保持和当前双向绑定一致。
-        if (status.last_answer !== undefined) {
-             input.value = status.last_answer
-             userAnswers.value[id] = status.last_answer
-        } else if (!userAnswers.value[id]) {
-             input.value = ''
-        } else {
-             input.value = userAnswers.value[id]
-        }
-    })
-    
-    const infos = document.querySelectorAll('.attempt-info')
-    infos.forEach(info => {
-        const id = info.dataset.id
-        const status = statusMap[id]
-        if (!status) return
-        
-        info.textContent = status.correct
-                ? '已正确'
-                : (status.locked ? '已锁定' : `剩余 ${status.remaining} 次`)
-    })
-}
+    input.disabled = resolveInputDisabled(status)
+    input.placeholder = getInputPlaceholder(status)
+    input.classList.toggle('readonly-team', teamworkEnabled.value && !!status.owner_student_id && !status.editable)
 
-// 提交单个答案
-const submitSingleAnswer = async (input_id) => {
-    // 确保把同步更新过的值拿过来
-    let currentVal = userAnswers.value[input_id]
-    
-    // 如果是 null, undefined 或包含空格，进行处理
-    if (currentVal === null || currentVal === undefined) {
-        currentVal = ""
-    } else {
-        // 由于是填空题，去掉首尾空格是合理的，
-        // 除非题目明确要求保留空格（比如英语句子填空），
-        // 但根据报错推测是空字符串或空格导致后端处理异常
-        currentVal = String(currentVal).trim() 
+    if (status.last_answer !== undefined) {
+      input.value = status.last_answer
+      userAnswers.value[id] = status.last_answer
+    } else if (userAnswers.value[id]) {
+      input.value = userAnswers.value[id]
     }
-    
-    // 构建只包含该 ID 的答案对象
-    const singleAnswer = {}
-    singleAnswer[input_id] = currentVal
+  })
 
-    try {
-        const config = {}
-        if (token) {
-            config.headers = { Authorization: `Bearer ${token}` }
-        }
-
-        const res = await axios.post(`${API_BASE_URL}/problems/submit`, {
-            problem_id: problemId,
-            answers: singleAnswer,
-        }, config)
-        
-        // 如果是游客，没有 attempt_status, 需要手动显示验证结果
-        if (!token) {
-            const isCorrect = res.data.results?.[input_id]
-            // 手动更新 DOM 提示
-            const info = document.querySelector(`.attempt-info[data-id="${input_id}"]`)
-            const input = document.querySelector(`.problem-input-field[data-id="${input_id}"]`)
-            if (info) {
-                info.textContent = isCorrect ? '✔️ 正确' : '❌ 错误'
-                info.style.color = isCorrect ? '#67c23a' : '#f56c6c'
-                // 如果正确，可以禁用输入框，或者让用户继续玩？既然是游客，就随便玩吧，这里不禁用
-            }
-            if (input) {
-                if(isCorrect) {
-                     input.style.borderColor = '#67c23a'
-                     input.style.backgroundColor = '#f0f9eb'
-                } else {
-                     input.style.borderColor = '#f56c6c'
-                     input.style.backgroundColor = '#fef0f0'
-                }
-            }
-            return
-        }
-
-        // 更新尝试状态（后端会返回所有 ID 的最新状态）
-        attemptStatus.value = res.data.attempt_status || {}
-        
-        // 更新 UI 样式
-        // 注意：后端返回的 results 可能包含所有字段的校验结果，但我们只关心当前这一个
-        const isCorrect = res.data.results[input_id]
-        
-        // 更新所有相同 id 的样式
-        const sameInputs = document.querySelectorAll(`.problem-input-field[data-id="${input_id}"]`)
-        sameInputs.forEach(input => {
-            updateInputStyleDOM(input, isCorrect)
-        })
-        
-        applyAttemptStatusToInputs(attemptStatus.value)
-
-    } catch (e) {
-         if (e.response && (e.response.status === 403 || e.response.status === 401)) {
-            alert('登录已过期或未授权')
-            localStorage.removeItem('studentToken')
-            router.push('/')
-        } else if (e.response?.status === 400) {
-            alert(e.response?.data?.detail || '提交参数错误')
-        } else {
-            console.error(e)
-            // 简单的抖动错误反馈，或者 toast
-        }
-    }
+  document.querySelectorAll('.attempt-info').forEach((info) => {
+    const id = info.dataset.id
+    const status = statusMap[id]
+    if (!status) return
+    info.textContent = getInputStatusText(status)
+  })
 }
 
 const updateInputStyleDOM = (input, isCorrect) => {
-    if (!input) return
-    
-    if (isCorrect === true) {
-        input.classList.add('correct')
-        input.classList.remove('incorrect')
-        input.style.borderColor = '#67c23a'
-        input.style.backgroundColor = '#f0f9eb'
-        input.blur() // 正确后失去焦点
-    } else if (isCorrect === false) {
-        input.classList.add('incorrect')
-        input.style.borderColor = '#f56c6c'
-        input.style.backgroundColor = '#fef0f0'
-        // 触发一次摇晃动画；先移除再强制重排，确保连续答错也会再次播放。
-        input.classList.remove('shake')
-        void input.offsetWidth
-        input.classList.add('shake')
-        setTimeout(() => input.classList.remove('shake'), 400)
+  if (!input) return
+
+  if (isCorrect === true) {
+    input.classList.add('correct')
+    input.classList.remove('incorrect')
+    input.style.borderColor = '#16a34a'
+    input.style.backgroundColor = '#f0fdf4'
+    input.blur()
+    return
+  }
+
+  if (isCorrect === false) {
+    input.classList.add('incorrect')
+    input.style.borderColor = '#dc2626'
+    input.style.backgroundColor = '#fef2f2'
+    input.classList.remove('shake')
+    void input.offsetWidth
+    input.classList.add('shake')
+    setTimeout(() => input.classList.remove('shake'), 400)
+  }
+}
+
+const submitSingleAnswer = async (inputId) => {
+  if (teamworkEnabled.value) {
+    const status = attemptStatus.value[inputId]
+    if (!status?.editable) {
+      alert('只能提交自己认领的子问题区域。')
+      return
     }
-}
+  }
 
-const updateInputStyle = (id, isCorrect) => {
-    const input = document.querySelector(`.problem-input-field[data-id="${id}"]`)
-    updateInputStyleDOM(input, isCorrect)
-}
+  let currentValue = userAnswers.value[inputId]
+  if (currentValue === null || currentValue === undefined) {
+    currentValue = ''
+  } else {
+    currentValue = String(currentValue).trim()
+  }
 
-// 废弃旧的批量提交函数，或者保留用于"一键提交所有"（如果有的话）
-// const submitAnswers = ... 
+  const singleAnswer = { [inputId]: currentValue }
+
+  try {
+    const res = await axios.post(
+      `${API_BASE_URL}/problems/submit`,
+      {
+        problem_id: problemId,
+        answers: singleAnswer,
+      },
+      authConfig(),
+    )
+
+    if (!token) {
+      const isCorrect = res.data.results?.[inputId]
+      const info = document.querySelector(`.attempt-info[data-id="${inputId}"]`)
+      const input = document.querySelector(`.problem-input-field[data-id="${inputId}"]`)
+      if (info) {
+        info.textContent = isCorrect ? '正确' : '错误'
+      }
+      if (input) {
+        updateInputStyleDOM(input, isCorrect)
+      }
+      return
+    }
+
+    attemptStatus.value = res.data.attempt_status || {}
+    const isCorrect = res.data.results?.[inputId]
+    document.querySelectorAll(`.problem-input-field[data-id="${inputId}"]`).forEach((input) => {
+      updateInputStyleDOM(input, isCorrect)
+    })
+    applyAttemptStatusToInputs(attemptStatus.value)
+  } catch (e) {
+    if (e.response?.status === 401 || e.response?.status === 403) {
+      alert(e.response?.data?.detail || '登录已过期或未授权')
+      if (e.response?.status === 401) {
+        handleAuthExpired()
+      }
+      return
+    }
+    if (e.response?.status === 400) {
+      alert(e.response?.data?.detail || '提交参数错误')
+      return
+    }
+    console.error(e)
+    alert(e.response?.data?.detail || '提交失败')
+  }
+}
 </script>
 
 <style>
-/* 全局样式，因为 v-html 里的内容不受 scoped 控制 */
 .markdown-body {
-    line-height: 1.8;
-    font-size: 16px;
-    color: #333;
+  line-height: 1.8;
+  font-size: 16px;
+  color: #243041;
 }
+
 .markdown-body p {
-    margin-bottom: 1em;
+  margin-bottom: 1em;
 }
+
 .problem-input-field {
-    border: 1px solid #dcdfe6;
-    border-radius: 4px;
-    padding: 6px 10px;
-    margin: 0 4px;
-    width: 100px; 
-    font-family: inherit;
-    font-size: 0.95em;
-    text-align: center;
-    transition: all 0.3s;
-    background: #fff;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  border: 1px solid #d7dee8;
+  border-radius: 12px;
+  padding: 8px 12px;
+  margin: 0 4px;
+  width: 112px;
+  font-family: inherit;
+  font-size: 0.95em;
+  text-align: center;
+  transition: all 0.25s;
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
 }
+
 .problem-input-field:focus {
-    border-color: #409eff;
-    outline: none;
-    box-shadow: 0 0 0 2px rgba(64, 158, 255, 0.2);
+  border-color: #2563eb;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
 }
+
 .problem-input-field:disabled {
-    background-color: #f5f7fa;
-    color: #909399;
-    cursor: not-allowed;
+  background-color: #f8fafc;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.problem-input-field.readonly-team {
+  border-style: dashed;
 }
 
 .problem-input-field.shake {
-    animation: inputShake 0.35s ease-in-out;
+  animation: inputShake 0.35s ease-in-out;
 }
 
 @keyframes inputShake {
-    0%, 100% { transform: translateX(0); }
-    20% { transform: translateX(-5px); }
-    40% { transform: translateX(5px); }
-    60% { transform: translateX(-4px); }
-    80% { transform: translateX(4px); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .problem-input-field.shake {
-        animation: none;
-    }
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-5px); }
+  40% { transform: translateX(5px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
 }
 
 .input-wrapper {
-    display: inline-flex;
-    position: relative; /* 设置相对定位，作为 tooltip 的容器 */
-    vertical-align: middle;
-    align-items: center;
-    margin: 0 4px;
-}
-/* 悬浮提示样式 (Tooltip) */
-.attempt-info {
-    position: absolute;
-    top: 110%; /* 显示在输入框下方 */
-    left: 50%;
-    transform: translateX(-50%);
-    background-color: rgba(0, 0, 0, 0.8);
-    color: #fff;
-    padding: 5px 10px;
-    border-radius: 4px;
-    font-size: 12px;
-    white-space: nowrap;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s, top 0.2s;
-    z-index: 100;
+  display: inline-flex;
+  position: relative;
+  vertical-align: middle;
+  align-items: center;
+  margin: 0 4px;
 }
 
-/* 小箭头 (指向下方的内容，所以箭头在上面指向下...不对，Tooltip在下方，箭头应在Top指向上) */
+.attempt-info {
+  position: absolute;
+  top: 115%;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: rgba(15, 23, 42, 0.88);
+  color: #fff;
+  padding: 5px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, top 0.2s;
+  z-index: 100;
+}
+
 .attempt-info::after {
-    content: '';
-    position: absolute;
-    bottom: 100%; /* 箭头位于 Tooltip 顶部 */
-    left: 50%;
-    margin-left: -5px;
-    border-width: 5px;
-    border-style: solid;
-    border-color: transparent transparent rgba(0, 0, 0, 0.8) transparent;
+  content: '';
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  margin-left: -5px;
+  border-width: 5px;
+  border-style: solid;
+  border-color: transparent transparent rgba(15, 23, 42, 0.88) transparent;
 }
 
 .input-wrapper:hover .attempt-info {
-    opacity: 1;
-    top: 125%; /* 悬浮时效果 */
+  opacity: 1;
+  top: 128%;
 }
 
-/* KaTeX 公式间距微调 */
 .katex-display {
-    margin: 0.5em 0 !important; /* 减小上下间距 */
-    padding: 2px 0;
+  margin: 0.5em 0 !important;
+  padding: 2px 0;
 }
 </style>
 
 <style scoped>
-.terminated-banner {
-    background: #fdf6ec;
-    color: #e6a23c;
-    border: 1px solid #faecd8;
-    padding: 10px 15px;
-    margin-bottom: 20px;
-    border-radius: 4px;
-    font-weight: 500;
+.problem-container {
+  max-width: 1120px;
+  margin: 32px auto 48px;
+  padding: 0 20px 24px;
 }
 
-.problem-container {
-    max-width: 900px;
-    margin: 40px auto;
-    padding: 30px;
-    background: #fff;
-    border-radius: 12px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+.card-shell {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96) 0%, #ffffff 100%);
+  border: 1px solid #e5ecf3;
+  border-radius: 24px;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.06);
 }
 
 .nav-bar {
-    margin-bottom: 30px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 1px solid #ebeef5;
-    padding-bottom: 15px;
+  margin-bottom: 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 24px;
+  background: linear-gradient(135deg, #f7fbff 0%, #ffffff 100%);
+  border: 1px solid #e5ecf3;
+  border-radius: 22px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.05);
 }
 
 .nav-right {
-    display: flex;
-    align-items: center;
-    gap: 15px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.score-badge,
+.team-badge,
+.user-badge {
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .score-badge {
-    font-weight: bold;
-    color: #67c23a;
-    background: #f0f9eb;
-    padding: 6px 12px;
-    border-radius: 6px;
-    font-size: 14px;
+  color: #166534;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+}
+
+.score-badge.team {
+  color: #1d4ed8;
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.score-badge.mine {
+  color: #7c2d12;
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+
+.team-badge {
+  color: #0f766e;
+  background: #ecfeff;
+  border: 1px solid #a5f3fc;
 }
 
 .user-badge {
-    font-weight: 500;
-    color: #303133;
+  color: #334155;
+  background: #f8fafc;
+  border: 1px solid #dbe4ee;
 }
 
-.nav-bar button {
-    background: none;
-    border: none;
-    color: #606266;
-    cursor: pointer;
-    font-size: 15px;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    transition: color 0.2s;
+.back-btn {
+  background: none;
+  border: 1px solid #cfd8e3;
+  color: #475569;
+  cursor: pointer;
+  font-size: 15px;
+  border-radius: 999px;
+  padding: 10px 16px;
+  transition: all 0.2s;
 }
 
-.nav-bar button:hover {
-    color: #409eff;
+.back-btn:hover {
+  color: #1d4ed8;
+  border-color: #93c5fd;
+  background: #eff6ff;
 }
 
-.nav-bar span {
-    font-weight: 500;
-    color: #303133;
+.loading-state {
+  text-align: center;
+  color: #64748b;
 }
 
-.result-box {
-    margin-top: 25px;
-    padding: 16px;
-    border-radius: 6px;
-    font-weight: 600;
-    text-align: center;
-    animation: fadeIn 0.3s ease-out;
-}
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(-10px); }
-    to { opacity: 1; transform: translateY(0); }
+.terminated-banner,
+.guest-banner {
+  margin-bottom: 18px;
+  padding: 18px 20px;
 }
 
-.result-box.success {
-    background-color: #f0f9eb;
-    color: #67c23a;
-    border: 1px solid #e1f3d8;
+.terminated-banner {
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+  border-radius: 18px;
+  font-weight: 600;
 }
 
-.result-box.error {
-    background-color: #fef0f0;
-    color: #f56c6c;
-    border: 1px solid #fde2e2;
+.guest-banner {
+  background: #f8fafc;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
 }
 
-.actions {
-    margin-top: 30px;
-    border-top: 1px solid #ebeef5;
-    padding-top: 20px;
-    display: flex;
-    flex-direction: column;
+.team-panel-entry {
+  margin-bottom: 14px;
+  padding: 14px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
 }
 
-.submit-btn {
-    background: linear-gradient(135deg, #409eff 0%, #66b1ff 100%);
-    color: white;
-    border: none;
-    padding: 12px 30px;
-    border-radius: 20px;
-    font-size: 16px;
-    font-weight: 500;
-    cursor: pointer;
-    box-shadow: 0 4px 10px rgba(64, 158, 255, 0.3);
-    transition: transform 0.1s, box-shadow 0.2s;
+.team-panel-entry-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #334155;
 }
 
-.submit-btn:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 15px rgba(64, 158, 255, 0.4);
+.team-panel-entry-text strong {
+  color: #0f172a;
 }
 
-.hint-text {
-    font-size: 14px;
-    color: #909399;
-    padding: 10px;
-    text-align: right;
+.team-panel-entry-text span {
+  font-size: 13px;
+  color: #64748b;
 }
 
-.pdf-upload-panel {
-    border: 1px solid #d9e6ff;
-    border-radius: 12px;
-    padding: 14px;
-    margin-bottom: 10px;
-    background: linear-gradient(180deg, #f7faff 0%, #fdfefe 100%);
-    box-shadow: 0 8px 20px rgba(64, 158, 255, 0.08);
-    display: grid;
-    gap: 10px;
+.team-panel-open-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
+  box-shadow: 0 10px 24px rgba(37, 99, 235, 0.22);
 }
 
-.pdf-upload-label {
-    display: block;
-    font-size: 13px;
-    color: #5f6b7a;
-    font-weight: 600;
-    letter-spacing: 0.2px;
+.team-required-hint {
+  margin-bottom: 18px;
+  padding: 18px 20px;
 }
 
-.pdf-upload-input {
-    font-size: 13px;
-    border: 1px solid #dbe5f0;
-    background: #fff;
-    border-radius: 10px;
-    padding: 8px;
+.team-required-hint h3 {
+  margin: 0 0 8px;
+  color: #0f172a;
 }
 
-.pdf-upload-input::file-selector-button {
-    border: 0;
-    border-radius: 8px;
-    padding: 7px 12px;
-    margin-right: 10px;
-    cursor: pointer;
-    background: #ecf5ff;
-    color: #1f6feb;
-    font-weight: 600;
-    transition: all 0.2s ease;
+.team-required-hint p {
+  margin: 0;
+  color: #64748b;
 }
 
-.pdf-upload-input::file-selector-button:hover {
-    background: #dbeafe;
+.team-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.team-modal-card {
+  width: min(980px, 96vw);
+  max-height: 90vh;
+  overflow: auto;
+  background: #fff;
+  border-radius: 20px;
+  box-shadow: 0 28px 60px rgba(15, 23, 42, 0.26);
+  padding: 18px;
+}
+
+.team-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.team-modal-header h3 {
+  margin: 0;
+  color: #0f172a;
+}
+
+.team-modal-close {
+  border: none;
+  background: #f1f5f9;
+  color: #475569;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
 }
 
 .pdf-upload-btn {
-    justify-self: start;
-    background: linear-gradient(135deg, #1f8fff 0%, #2ea6ff 100%);
-    color: #fff;
-    border: none;
-    border-radius: 999px;
-    padding: 8px 16px;
-    cursor: pointer;
-    font-size: 13px;
-    font-weight: 600;
-    box-shadow: 0 8px 16px rgba(31, 143, 255, 0.24);
-    transition: transform 0.12s ease, box-shadow 0.2s ease, filter 0.2s ease;
+  border: none;
+  border-radius: 999px;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  transition: transform 0.12s ease, box-shadow 0.2s ease, filter 0.2s ease;
 }
 
 .pdf-upload-btn:hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 0 10px 20px rgba(31, 143, 255, 0.3);
-    filter: saturate(1.05);
+  transform: translateY(-1px);
 }
 
 .pdf-upload-btn:disabled {
-    background: linear-gradient(135deg, #a9d4ff 0%, #c2e3ff 100%);
-    cursor: not-allowed;
-    box-shadow: none;
+  cursor: not-allowed;
+  box-shadow: none;
+  opacity: 0.65;
+}
+
+.actions {
+  margin-top: 24px;
+  padding: 24px;
+  border: 1px solid #e5ecf3;
+  border-radius: 24px;
+  background: linear-gradient(180deg, #ffffff 0%, #fbfdff 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.hint-text {
+  font-size: 14px;
+  color: #64748b;
+}
+
+.pdf-upload-panel {
+  border: 1px solid #dbeafe;
+  border-radius: 18px;
+  padding: 16px;
+  background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+  display: grid;
+  gap: 10px;
+}
+
+.pdf-upload-label {
+  display: block;
+  font-size: 13px;
+  color: #475569;
+  font-weight: 700;
+}
+
+.pdf-upload-input {
+  font-size: 13px;
+  border: 1px solid #dbe5f0;
+  background: #fff;
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.pdf-upload-input::file-selector-button {
+  border: 0;
+  border-radius: 8px;
+  padding: 7px 12px;
+  margin-right: 10px;
+  cursor: pointer;
+  background: #ecf5ff;
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+.pdf-upload-btn {
+  justify-self: start;
+  background: linear-gradient(135deg, #0f766e 0%, #0d9488 100%);
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(13, 148, 136, 0.22);
 }
 
 .pdf-upload-status {
-    font-size: 12px;
-    color: #5f6b7a;
-    background: rgba(255, 255, 255, 0.8);
-    border: 1px solid #e9f0fb;
-    border-radius: 8px;
-    padding: 6px 10px;
+  font-size: 12px;
+  color: #475569;
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 8px 10px;
 }
 
-.guest-banner { 
-    color: #909399; 
-    margin-bottom: 15px; 
-    font-size: 13px; 
-    text-align: center; 
-    font-style: italic;
-    background-color: transparent;
-    padding: 5px;
-    border: none;
+@media (max-width: 840px) {
+  .problem-container {
+    padding: 0 14px 20px;
+  }
+
+  .nav-bar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .team-panel-entry {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 </style>

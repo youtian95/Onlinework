@@ -2,7 +2,27 @@
   <div class="modal-overlay" @click.self="$emit('close')">
         <div class="modal-card">
             <div class="modal-header">
-                <h3>🏆 {{ problemTitle }} - 排行榜</h3>
+                <div>
+                    <h3>🏆 {{ problemTitle }} - 排行榜</h3>
+                    <div v-if="teamworkEnabled" class="scope-switch">
+                        <button
+                            type="button"
+                            class="scope-btn"
+                            :class="{ active: scope === 'personal' }"
+                            @click="changeScope('personal')"
+                        >
+                            个人榜
+                        </button>
+                        <button
+                            type="button"
+                            class="scope-btn"
+                            :class="{ active: scope === 'team' }"
+                            @click="changeScope('team')"
+                        >
+                            队伍榜
+                        </button>
+                    </div>
+                </div>
                 <button class="close-btn" @click="$emit('close')">×</button>
             </div>
             <div class="modal-body">
@@ -13,16 +33,69 @@
                     暂无数据
                 </div>
                 <table v-else class="ranking-table">
-                    <thead>
+                    <thead v-if="isTeamScope">
+                        <tr>
+                            <th>名次</th>
+                            <th>队伍</th>
+                            <th>人数</th>
+                            <th>得分</th>
+                            <th>得分率</th>
+                            <th>最后更新</th>
+                        </tr>
+                    </thead>
+                    <thead v-else-if="teamworkEnabled">
+                        <tr>
+                            <th>名次</th>
+                            <th>学号</th>
+                            <th>姓名</th>
+                            <th>队伍</th>
+                            <th>认领</th>
+                            <th>得分</th>
+                            <th>得分率</th>
+                            <th>最后更新</th>
+                        </tr>
+                    </thead>
+                    <thead v-else>
                         <tr>
                             <th>名次</th>
                             <th>学号</th>
                             <th>姓名</th>
                             <th>得分</th>
-                            <th>完成时间</th>
+                            <th>最后更新</th>
                         </tr>
                     </thead>
-                    <tbody>
+                    <tbody v-if="isTeamScope">
+                        <tr v-for="item in rankingData" :key="item.team_id" :class="{ 'is-me': isMyTeam(item) }">
+                            <td>
+                                <span class="rank-badge" :class="'rank-' + item.rank">{{ item.rank }}</span>
+                            </td>
+                            <td>
+                                <div class="team-cell">
+                                    <strong>{{ item.team_name || `第 ${item.team_no} 队` }}</strong>
+                                    <span class="team-sub">第 {{ item.team_no }} 队</span>
+                                </div>
+                            </td>
+                            <td>{{ item.member_count }}</td>
+                            <td class="score-cell">{{ item.score }} / {{ item.total_possible }}</td>
+                            <td class="score-cell">{{ item.score_rate }}%</td>
+                            <td class="time-cell">{{ formatTime(item.last_update) }}</td>
+                        </tr>
+                    </tbody>
+                    <tbody v-else-if="teamworkEnabled">
+                        <tr v-for="item in rankingData" :key="item.student_id" :class="{ 'is-me': item.student_id === studentId }">
+                            <td>
+                                <span class="rank-badge" :class="'rank-' + item.rank">{{ item.rank }}</span>
+                            </td>
+                            <td>{{ item.student_id }}</td>
+                            <td>{{ item.name }}</td>
+                            <td>{{ item.team_no ? `第 ${item.team_no} 队` : '-' }}</td>
+                            <td>{{ item.subproblem_no ? `子题 ${item.subproblem_no}` : '-' }}</td>
+                            <td class="score-cell">{{ item.score }} / {{ item.total_possible }}</td>
+                            <td class="score-cell">{{ item.score_rate }}%</td>
+                            <td class="time-cell">{{ formatTime(item.last_update) }}</td>
+                        </tr>
+                    </tbody>
+                    <tbody v-else>
                         <tr v-for="item in rankingData" :key="item.student_id" :class="{ 'is-me': item.student_id === studentId }">
                             <td>
                                 <span class="rank-badge" :class="'rank-' + item.rank">{{ item.rank }}</span>
@@ -42,11 +115,13 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import axios from 'axios'
+import { computed } from 'vue'
 
 const props = defineProps({
     problemId: [String, Number],
     problemTitle: String,
-    studentId: String
+    studentId: String,
+    teamworkEnabled: Boolean
 })
 
 const emit = defineEmits(['close'])
@@ -54,18 +129,40 @@ const emit = defineEmits(['close'])
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 const rankingData = ref([])
 const loading = ref(true)
+const scope = ref('personal')
+
+const isTeamScope = computed(() => props.teamworkEnabled && scope.value === 'team')
+
+const myTeamNo = computed(() => {
+    const problemKey = String(props.problemId || '')
+    const raw = localStorage.getItem('problemTeamMemberships')
+    if (!raw) return null
+    try {
+        const parsed = JSON.parse(raw)
+        return parsed?.[problemKey]?.team_no ?? null
+    } catch {
+        return null
+    }
+})
 
 const formatTime = (isoString) => {
     if (!isoString) return '-'
-    return new Date(isoString).toLocaleDateString()
+    return new Date(isoString).toLocaleString()
 }
 
-onMounted(async () => {
+const isMyTeam = (item) => myTeamNo.value !== null && item.team_no === myTeamNo.value
+
+const fetchRanking = async () => {
     loading.value = true
     try {
         const token = localStorage.getItem('studentToken')
+        const params = {}
+        if (props.teamworkEnabled) {
+            params.scope = scope.value
+        }
         const res = await axios.get(`${API_BASE_URL}/problems/${props.problemId}/ranking`, {
-            headers: { Authorization: `Bearer ${token}` }
+            headers: { Authorization: `Bearer ${token}` },
+            params,
         })
         rankingData.value = res.data
     } catch (e) {
@@ -73,6 +170,18 @@ onMounted(async () => {
     } finally {
         loading.value = false
     }
+}
+
+const changeScope = (nextScope) => {
+    if (!props.teamworkEnabled || scope.value === nextScope) {
+        return
+    }
+    scope.value = nextScope
+    fetchRanking()
+}
+
+onMounted(async () => {
+    await fetchRanking()
 })
 </script>
 
@@ -93,7 +202,7 @@ onMounted(async () => {
 
 .modal-card {
     background: #fff;
-    width: 600px;
+    width: 800px;
     max-width: 90%;
     max-height: 80vh;
     border-radius: 12px;
@@ -108,8 +217,35 @@ onMounted(async () => {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 16px;
 }
 .modal-header h3 { margin: 0; font-size: 18px; color: #303133; }
+
+.scope-switch {
+    display: inline-flex;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 4px;
+    background: #f6f7fb;
+    border-radius: 999px;
+}
+
+.scope-btn {
+    border: none;
+    background: transparent;
+    color: #6b7280;
+    padding: 7px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.scope-btn.active {
+    background: #ffffff;
+    color: #1d4ed8;
+    box-shadow: 0 2px 10px rgba(29, 78, 216, 0.12);
+}
 
 .close-btn {
     background: none; border: none; font-size: 24px; cursor: pointer; color: #999;
@@ -163,6 +299,17 @@ onMounted(async () => {
 
 .score-cell { font-family: 'Consolas', monospace; font-weight: bold; }
 .time-cell { font-size: 12px; color: #999; }
+.team-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.team-sub {
+    font-size: 12px;
+    color: #94a3b8;
+}
+
 .loading-state-mini { text-align: center; padding: 40px; color: #999; }
 .empty-state-mini { text-align: center; padding: 40px; color: #ccc; }
 

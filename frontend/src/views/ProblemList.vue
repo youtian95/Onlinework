@@ -34,11 +34,18 @@
                         <div class="problem-detail-col">
                             <span class="problem-title">
                                 {{ problem.title }}
+                                <span v-if="problem.teamwork_enabled" class="badge-teamwork">团队作业</span>
                                 <span v-if="problem.is_terminated" class="badge-terminated">已截止</span>
                             </span>
                             <div class="problem-meta">
                                 <span class="problem-score" v-if="problem.total_score !== undefined">
                                     得分: {{ problem.obtained_score }} / {{ problem.total_score }}
+                                </span>
+                                <span v-if="problem.teamwork_enabled && studentId && problem.team_joined" class="problem-team">
+                                    当前队伍: {{ formatTeamLabel(problem) }}
+                                </span>
+                                <span v-else-if="problem.teamwork_enabled && studentId" class="problem-team pending">
+                                    尚未加入队伍
                                 </span>
                                 <span class="problem-deadline" v-if="problem.deadline && !problem.is_terminated">
                                     截止: {{ new Date(problem.deadline).toLocaleString() }}
@@ -49,7 +56,7 @@
                     <div class="problem-action">
                          <span class="rank-btn" v-if="studentId" @click.stop="viewRanking(problem)">🏆 排名</span>
                         <span class="action-text">
-                            {{ studentId ? (problem.is_terminated ? '查看内容' : '开始作答') : '浏览内容' }}
+                            {{ getActionText(problem) }}
                         </span>
                         <span class="arrow">→</span>
                     </div>
@@ -64,6 +71,7 @@
         :problemId="currentRankingProblem?.id"
         :problemTitle="currentRankingProblem?.title"
         :studentId="studentId"
+        :teamworkEnabled="currentRankingProblem?.teamwork_enabled"
         @close="closeRankingModal"
     />
 
@@ -99,6 +107,26 @@ const closeRankingModal = () => {
     currentRankingProblem.value = null
 }
 
+const formatTeamLabel = (problem) => {
+    if (problem.team_name) {
+        return problem.team_name
+    }
+    if (problem.team_no) {
+        return `第 ${problem.team_no} 队`
+    }
+    return '已入队'
+}
+
+const getActionText = (problem) => {
+    if (!studentId) {
+        return '浏览内容'
+    }
+    if (problem.teamwork_enabled && !problem.team_joined) {
+        return '进入选队'
+    }
+    return problem.is_terminated ? '查看内容' : '开始作答'
+}
+
 onMounted(async () => {
     // Guest mode supported: don't redirect if no token
     
@@ -110,6 +138,18 @@ onMounted(async () => {
         
         const res = await axios.get(`${API_BASE_URL}/problems`, config)
         problems.value = res.data
+        if (studentId) {
+            const membershipMap = {}
+            for (const problem of res.data) {
+                if (problem.teamwork_enabled && problem.team_joined) {
+                    membershipMap[String(problem.id)] = {
+                        team_no: problem.team_no ?? null,
+                        team_name: problem.team_name ?? null,
+                    }
+                }
+            }
+            localStorage.setItem('problemTeamMemberships', JSON.stringify(membershipMap))
+        }
     } catch (e) {
         if (e.response && e.response.status === 401) {
             // Token expired or invalid
@@ -272,14 +312,39 @@ const logout = () => {
     padding: 1px 5px;
     border-radius: 4px;
 }
+
+.badge-teamwork {
+    background: #ecfdf3;
+    color: #0f8a5f;
+    border: 1px solid #b7ebd2;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 999px;
+}
+
 .problem-meta {
     display: flex;
+    flex-wrap: wrap;
     gap: 15px;
     font-size: 13px;
     color: #888;
 }
 .problem-deadline {
     color: #e6a23c;
+}
+
+.problem-team {
+    color: #0f766e;
+    background: #f0fdfa;
+    border: 1px solid #ccfbf1;
+    border-radius: 999px;
+    padding: 2px 8px;
+}
+
+.problem-team.pending {
+    color: #9a3412;
+    background: #fff7ed;
+    border-color: #fed7aa;
 }
 
 .problem-action {

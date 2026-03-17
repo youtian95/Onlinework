@@ -2,12 +2,25 @@ from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File, 
 from fastapi.responses import Response, StreamingResponse, JSONResponse
 from sqlmodel import Session, select, delete
 from backend.db import engine
-from backend.models import Student, Attempt, ProblemState
+from backend.models import (
+    Student,
+    Attempt,
+    ProblemState,
+    ProblemSubmission,
+    SystemSetting,
+    TeamWorkConfig,
+    Team,
+    TeamMember,
+    TeamSubproblemClaim,
+    TeamAttempt,
+    TeamSubmission,
+)
 from backend.core.config import ARCHIVES_DIR
 from backend.core.security import verify_token
 from backend.services.problems import (
     load_problem_script,
     PROBLEMS_DIR,
+    get_problem_subproblem_bundle,
     get_stable_rng,
     ensure_meta_inputs,
     DEFAULT_INPUT_SCORE
@@ -113,6 +126,154 @@ def create_db_dump_bytes(session: Session) -> bytes:
         for a in attempts:
             a_writer.writerow([a.id, a.student_id, a.problem_id, a.input_id, a.attempts, a.correct, a.last_answer, a.updated_at.isoformat() if a.updated_at else ""])
         zip_file.writestr("attempts.csv", a_out.getvalue().encode("utf-8-sig"))
+
+        # 3. Problem Submissions
+        ps_out = io.StringIO()
+        ps_writer = csv.writer(ps_out)
+        ps_writer.writerow(["id", "student_id", "problem_id", "pdf_path", "original_filename", "updated_at"])
+        problem_submissions = session.exec(select(ProblemSubmission)).all()
+        for p in problem_submissions:
+            ps_writer.writerow([
+                p.id,
+                p.student_id,
+                p.problem_id,
+                p.pdf_path,
+                p.original_filename,
+                p.updated_at.isoformat() if p.updated_at else "",
+            ])
+        zip_file.writestr("problem_submissions.csv", ps_out.getvalue().encode("utf-8-sig"))
+
+        # 4. Problem States
+        st_out = io.StringIO()
+        st_writer = csv.writer(st_out)
+        st_writer.writerow(["id", "problem_id", "title", "is_visible", "is_public_view", "deadline", "is_deleted", "created_at"])
+        states = session.exec(select(ProblemState)).all()
+        for s in states:
+            st_writer.writerow([
+                s.id,
+                s.problem_id,
+                s.title,
+                s.is_visible,
+                s.is_public_view,
+                s.deadline.isoformat() if s.deadline else "",
+                s.is_deleted,
+                s.created_at.isoformat() if s.created_at else "",
+            ])
+        zip_file.writestr("problem_states.csv", st_out.getvalue().encode("utf-8-sig"))
+
+        # 5. System Settings
+        ss_out = io.StringIO()
+        ss_writer = csv.writer(ss_out)
+        ss_writer.writerow(["key", "value"])
+        settings = session.exec(select(SystemSetting)).all()
+        for s in settings:
+            ss_writer.writerow([s.key, s.value])
+        zip_file.writestr("system_settings.csv", ss_out.getvalue().encode("utf-8-sig"))
+
+        # 6. TeamWork Configs
+        twc_out = io.StringIO()
+        twc_writer = csv.writer(twc_out)
+        twc_writer.writerow(["id", "problem_id", "team_count", "team_size", "subproblem_count", "created_at", "updated_at"])
+        team_configs = session.exec(select(TeamWorkConfig)).all()
+        for c in team_configs:
+            twc_writer.writerow([
+                c.id,
+                c.problem_id,
+                c.team_count,
+                c.team_size,
+                c.subproblem_count,
+                c.created_at.isoformat() if c.created_at else "",
+                c.updated_at.isoformat() if c.updated_at else "",
+            ])
+        zip_file.writestr("teamwork_configs.csv", twc_out.getvalue().encode("utf-8-sig"))
+
+        # 7. Teams
+        t_out = io.StringIO()
+        t_writer = csv.writer(t_out)
+        t_writer.writerow(["id", "problem_id", "team_no", "name", "max_members", "created_at"])
+        teams = session.exec(select(Team)).all()
+        team_no_by_id = {t.id: t.team_no for t in teams}
+        for t in teams:
+            t_writer.writerow([
+                t.id,
+                t.problem_id,
+                t.team_no,
+                t.name,
+                t.max_members,
+                t.created_at.isoformat() if t.created_at else "",
+            ])
+        zip_file.writestr("teams.csv", t_out.getvalue().encode("utf-8-sig"))
+
+        # 8. Team Members
+        tm_out = io.StringIO()
+        tm_writer = csv.writer(tm_out)
+        tm_writer.writerow(["id", "problem_id", "team_id", "team_no", "student_id", "joined_at"])
+        team_members = session.exec(select(TeamMember)).all()
+        for m in team_members:
+            tm_writer.writerow([
+                m.id,
+                m.problem_id,
+                m.team_id,
+                team_no_by_id.get(m.team_id),
+                m.student_id,
+                m.joined_at.isoformat() if m.joined_at else "",
+            ])
+        zip_file.writestr("team_members.csv", tm_out.getvalue().encode("utf-8-sig"))
+
+        # 9. Team Claims
+        tc_out = io.StringIO()
+        tc_writer = csv.writer(tc_out)
+        tc_writer.writerow(["id", "problem_id", "team_id", "team_no", "student_id", "subproblem_no", "claimed_at"])
+        team_claims = session.exec(select(TeamSubproblemClaim)).all()
+        for c in team_claims:
+            tc_writer.writerow([
+                c.id,
+                c.problem_id,
+                c.team_id,
+                team_no_by_id.get(c.team_id),
+                c.student_id,
+                c.subproblem_no,
+                c.claimed_at.isoformat() if c.claimed_at else "",
+            ])
+        zip_file.writestr("team_claims.csv", tc_out.getvalue().encode("utf-8-sig"))
+
+        # 10. Team Attempts
+        ta_out = io.StringIO()
+        ta_writer = csv.writer(ta_out)
+        ta_writer.writerow(["id", "problem_id", "team_id", "team_no", "student_id", "input_id", "attempts", "correct", "last_answer", "updated_at"])
+        team_attempts = session.exec(select(TeamAttempt)).all()
+        for a in team_attempts:
+            ta_writer.writerow([
+                a.id,
+                a.problem_id,
+                a.team_id,
+            team_no_by_id.get(a.team_id),
+                a.student_id,
+                a.input_id,
+                a.attempts,
+                a.correct,
+                a.last_answer,
+                a.updated_at.isoformat() if a.updated_at else "",
+            ])
+        zip_file.writestr("team_attempts.csv", ta_out.getvalue().encode("utf-8-sig"))
+
+        # 11. Team Submissions
+        ts_out = io.StringIO()
+        ts_writer = csv.writer(ts_out)
+        ts_writer.writerow(["id", "problem_id", "team_id", "team_no", "student_id", "pdf_path", "original_filename", "updated_at"])
+        team_submissions = session.exec(select(TeamSubmission)).all()
+        for s in team_submissions:
+            ts_writer.writerow([
+                s.id,
+                s.problem_id,
+                s.team_id,
+            team_no_by_id.get(s.team_id),
+                s.student_id,
+                s.pdf_path,
+                s.original_filename,
+                s.updated_at.isoformat() if s.updated_at else "",
+            ])
+        zip_file.writestr("team_submissions.csv", ts_out.getvalue().encode("utf-8-sig"))
         
     zip_buffer.seek(0)
     return zip_buffer.getvalue()
@@ -124,10 +285,30 @@ def restore_db_from_bytes(content: bytes, session: Session):
             names = zf.namelist()
             if "students.csv" not in names or "attempts.csv" not in names:
                 raise ValueError("Missing CSV files in zip")
+
+            def parse_bool(v):
+                return str(v).lower() == 'true'
+
+            def parse_dt(v):
+                if not v:
+                    return None
+                return datetime.fromisoformat(v)
             
             # WIPE DATA
+            session.exec(delete(TeamSubmission))
+            session.exec(delete(TeamAttempt))
+            session.exec(delete(TeamSubproblemClaim))
+            session.exec(delete(TeamMember))
+            session.exec(delete(Team))
+            session.exec(delete(TeamWorkConfig))
+            session.exec(delete(ProblemSubmission))
             session.exec(delete(Attempt))
             session.exec(delete(Student))
+
+            if "problem_states.csv" in names:
+                session.exec(delete(ProblemState))
+            if "system_settings.csv" in names:
+                session.exec(delete(SystemSetting))
             
             session.commit()
             
@@ -135,7 +316,6 @@ def restore_db_from_bytes(content: bytes, session: Session):
             with zf.open("students.csv") as f:
                 reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
                 for row in reader:
-                    def parse_bool(v): return str(v).lower() == 'true'
                     obj = Student(
                         student_id=row['student_id'],
                         name=row['name'],
@@ -150,7 +330,6 @@ def restore_db_from_bytes(content: bytes, session: Session):
             with zf.open("attempts.csv") as f:
                 reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
                 for row in reader:
-                    def parse_bool(v): return str(v).lower() == 'true'
                     obj = Attempt(
                         student_id=row['student_id'],
                         problem_id=row['problem_id'],
@@ -158,9 +337,162 @@ def restore_db_from_bytes(content: bytes, session: Session):
                         attempts=int(row['attempts']),
                         correct=parse_bool(row['correct']),
                         last_answer=row['last_answer'],
-                        updated_at=datetime.fromisoformat(row['updated_at']) if row['updated_at'] else datetime.now()
+                        updated_at=parse_dt(row['updated_at']) or datetime.now()
                     )
                     session.add(obj)
+
+            # Optional: Problem Submissions
+            if "problem_submissions.csv" in names:
+                with zf.open("problem_submissions.csv") as f:
+                    reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+                    for row in reader:
+                        obj = ProblemSubmission(
+                            student_id=row['student_id'],
+                            problem_id=row['problem_id'],
+                            pdf_path=row['pdf_path'],
+                            original_filename=row.get('original_filename') or None,
+                            updated_at=parse_dt(row.get('updated_at')) or datetime.now(),
+                        )
+                        session.add(obj)
+
+            # Optional: Problem States
+            if "problem_states.csv" in names:
+                with zf.open("problem_states.csv") as f:
+                    reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+                    for row in reader:
+                        obj = ProblemState(
+                            problem_id=row['problem_id'],
+                            title=row.get('title') or None,
+                            is_visible=parse_bool(row.get('is_visible')),
+                            is_public_view=parse_bool(row.get('is_public_view')),
+                            deadline=parse_dt(row.get('deadline')),
+                            is_deleted=parse_bool(row.get('is_deleted')),
+                            created_at=parse_dt(row.get('created_at')) or datetime.now(),
+                        )
+                        session.add(obj)
+
+            # Optional: System Settings
+            if "system_settings.csv" in names:
+                with zf.open("system_settings.csv") as f:
+                    reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+                    for row in reader:
+                        obj = SystemSetting(
+                            key=row['key'],
+                            value=row.get('value') or "",
+                        )
+                        session.add(obj)
+
+            # Optional: TeamWork Configs
+            if "teamwork_configs.csv" in names:
+                with zf.open("teamwork_configs.csv") as f:
+                    reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+                    for row in reader:
+                        obj = TeamWorkConfig(
+                            problem_id=row['problem_id'],
+                            team_count=int(row['team_count']),
+                            team_size=int(row['team_size']),
+                            subproblem_count=int(row['subproblem_count']),
+                            created_at=parse_dt(row.get('created_at')) or datetime.now(),
+                            updated_at=parse_dt(row.get('updated_at')) or datetime.now(),
+                        )
+                        session.add(obj)
+
+            # Optional: Teams
+            if "teams.csv" in names:
+                with zf.open("teams.csv") as f:
+                    reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+                    for row in reader:
+                        obj = Team(
+                            problem_id=row['problem_id'],
+                            team_no=int(row['team_no']),
+                            name=row.get('name') or None,
+                            max_members=int(row.get('max_members') or 0),
+                            created_at=parse_dt(row.get('created_at')) or datetime.now(),
+                        )
+                        session.add(obj)
+
+            session.commit()
+
+            # Build team id map from current DB rows to restore team members/attempts by logical key.
+            team_rows = session.exec(select(Team)).all()
+            team_id_map = {(t.problem_id, t.team_no): t.id for t in team_rows}
+
+            def resolve_team_id(row):
+                team_no_raw = row.get('team_no')
+                if team_no_raw not in (None, ""):
+                    try:
+                        team_no = int(team_no_raw)
+                        mapped = team_id_map.get((row['problem_id'], team_no))
+                        if mapped is not None:
+                            return int(mapped)
+                    except (TypeError, ValueError):
+                        pass
+
+                team_id_raw = row.get('team_id')
+                if team_id_raw in (None, ""):
+                    raise ValueError(f"Missing team identity for problem {row.get('problem_id')}")
+                return int(team_id_raw)
+
+            # Optional: Team Members
+            if "team_members.csv" in names:
+                with zf.open("team_members.csv") as f:
+                    reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+                    for row in reader:
+                        mapped_team_id = resolve_team_id(row)
+
+                        obj = TeamMember(
+                            problem_id=row['problem_id'],
+                            team_id=int(mapped_team_id),
+                            student_id=row['student_id'],
+                            joined_at=parse_dt(row.get('joined_at')) or datetime.now(),
+                        )
+                        session.add(obj)
+
+            # Optional: Team Claims
+            if "team_claims.csv" in names:
+                with zf.open("team_claims.csv") as f:
+                    reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+                    for row in reader:
+                        obj = TeamSubproblemClaim(
+                            problem_id=row['problem_id'],
+                            team_id=resolve_team_id(row),
+                            student_id=row['student_id'],
+                            subproblem_no=int(row['subproblem_no']),
+                            claimed_at=parse_dt(row.get('claimed_at')) or datetime.now(),
+                        )
+                        session.add(obj)
+
+            # Optional: Team Attempts
+            if "team_attempts.csv" in names:
+                with zf.open("team_attempts.csv") as f:
+                    reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+                    for row in reader:
+                        obj = TeamAttempt(
+                            problem_id=row['problem_id'],
+                            team_id=resolve_team_id(row),
+                            student_id=row['student_id'],
+                            input_id=row['input_id'],
+                            attempts=int(row['attempts']),
+                            correct=parse_bool(row['correct']),
+                            last_answer=row.get('last_answer'),
+                            updated_at=parse_dt(row.get('updated_at')) or datetime.now(),
+                        )
+                        session.add(obj)
+
+            # Optional: Team Submissions
+            if "team_submissions.csv" in names:
+                with zf.open("team_submissions.csv") as f:
+                    reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+                    for row in reader:
+                        obj = TeamSubmission(
+                            problem_id=row['problem_id'],
+                            team_id=resolve_team_id(row),
+                            student_id=row['student_id'],
+                            pdf_path=row['pdf_path'],
+                            original_filename=row.get('original_filename') or None,
+                            updated_at=parse_dt(row.get('updated_at')) or datetime.now(),
+                        )
+                        session.add(obj)
 
             session.commit()
     except Exception as e:
@@ -206,7 +538,7 @@ def create_archive(
     """
     1. Dump current DB to ZIP.
     2. Save to archives folder with name.
-    3. Wipe students (except test) and attempts.
+    3. Wipe students (except test), attempts, and teamwork runtime records.
     """
     verify_admin_token(token)
     
@@ -228,6 +560,12 @@ def create_archive(
         
     # 3. Wipe Active Data (Semester Reset Logic)
     try:
+        session.exec(delete(TeamSubmission))
+        session.exec(delete(TeamAttempt))
+        session.exec(delete(TeamSubproblemClaim))
+        session.exec(delete(TeamMember))
+        session.exec(delete(Team))
+        session.exec(delete(ProblemSubmission))
         session.exec(delete(Attempt))
         
         # Delete non-test students
@@ -310,9 +648,8 @@ def delete_archive(
 @router.get("/scores")
 def export_scores(session: Session = Depends(get_session), token: str = Query(...)):
     verify_admin_token(token)
-    
     students = session.exec(select(Student).where(Student.is_test == False, Student.is_deleted == False)).all()
-    
+
     if not os.path.exists(PROBLEMS_DIR):
         problems = []
     else:
@@ -320,14 +657,11 @@ def export_scores(session: Session = Depends(get_session), token: str = Query(..
         published_set = set(published_ids)
         problems = [f for f in os.listdir(PROBLEMS_DIR) if os.path.isdir(os.path.join(PROBLEMS_DIR, f)) and f in published_set]
         problems.sort()
-    
-    output = io.StringIO()
-    writer = csv.writer(output)
-    
-    header = ["学号", "姓名", "总分"]
-    prob_input_map = [] 
-    prob_col_indices = {} 
-    
+
+    teamwork_configs = session.exec(select(TeamWorkConfig)).all()
+    teamwork_config_map = {c.problem_id: c for c in teamwork_configs}
+
+    problem_meta = {}
     for pid in problems:
         script = load_problem_script(pid)
         p_title = pid
@@ -336,57 +670,153 @@ def export_scores(session: Session = Depends(get_session), token: str = Query(..
             p_title = script.meta.get("title", pid)
             meta = ensure_meta_inputs(script.meta)
             inputs_meta = meta.get("inputs", {})
-            
-        header.append(f"{p_title}(总分)")
-        prob_col_indices[pid] = len(header) - 1
-        
+
+        input_items = []
+        input_scores = {}
+        total_possible = 0
         for iid, conf in inputs_meta.items():
+            score = conf.get("score", DEFAULT_INPUT_SCORE)
+            input_items.append((iid, score))
+            input_scores[iid] = score
+            total_possible += score
+
+        teamwork_cfg = teamwork_config_map.get(pid)
+        input_sub_map = {}
+        sub_total_scores = {}
+        if teamwork_cfg and script:
+            rng = get_stable_rng(f"public_{pid}")
+            try:
+                params = script.generate(rng) if hasattr(script, "generate") else {}
+            except Exception:
+                params = {}
+            bundle = get_problem_subproblem_bundle(pid, params)
+            input_sub_map = bundle.get("input_subproblem_map", {})
+            for iid, score in input_items:
+                sub_no = input_sub_map.get(iid)
+                if sub_no is None:
+                    continue
+                sub_total_scores[sub_no] = sub_total_scores.get(sub_no, 0) + score
+
+        problem_meta[pid] = {
+            "title": p_title,
+            "is_teamwork": bool(teamwork_cfg),
+            "input_items": input_items,
+            "input_scores": input_scores,
+            "total_possible": total_possible,
+            "input_sub_map": input_sub_map,
+            "sub_total_scores": sub_total_scores,
+        }
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    header = ["学号", "姓名", "总分"]
+    for pid in problems:
+        p_meta = problem_meta.get(pid, {})
+        p_title = p_meta.get("title", pid)
+        header.append(f"{p_title}(总分)")
+        if p_meta.get("is_teamwork"):
+            header.append(f"{p_title}(个人得分率%)")
+            header.append(f"{p_title}(队伍总分)")
+            header.append(f"{p_title}(队伍得分率%)")
+        for iid, _ in p_meta.get("input_items", []):
             header.append(f"{p_title}-{iid}")
-            prob_input_map.append((pid, iid, conf.get("score", DEFAULT_INPUT_SCORE)))
-            
+
     writer.writerow(header)
-    
+
     attempts = session.exec(select(Attempt)).all()
-    att_map = {} 
+    att_map = {}
     for a in attempts:
         att_map[(a.student_id, a.problem_id, a.input_id)] = a
-        
+
+    team_attempts = session.exec(select(TeamAttempt)).all()
+    team_att_map = {}
+    for a in team_attempts:
+        team_att_map[(a.student_id, a.problem_id, a.input_id)] = a
+
+    team_members = session.exec(select(TeamMember)).all()
+    member_team_map = {(m.problem_id, m.student_id): m.team_id for m in team_members}
+
+    team_claims = session.exec(select(TeamSubproblemClaim)).all()
+    claim_map = {(c.problem_id, c.team_id, c.student_id): c.subproblem_no for c in team_claims}
+
+    team_seen_inputs = set()
+    team_score_map = {}
+    for a in team_attempts:
+        if not a.correct:
+            continue
+
+        p_meta = problem_meta.get(a.problem_id)
+        if not p_meta or not p_meta.get("is_teamwork"):
+            continue
+
+        key = (a.problem_id, a.team_id, a.input_id)
+        if key in team_seen_inputs:
+            continue
+        team_seen_inputs.add(key)
+
+        score = p_meta.get("input_scores", {}).get(a.input_id, DEFAULT_INPUT_SCORE)
+        team_score_map[(a.problem_id, a.team_id)] = team_score_map.get((a.problem_id, a.team_id), 0) + score
+
     for s in students:
-        row = [s.student_id, s.name, 0] 
+        row = [s.student_id, s.name, 0]
         current_total = 0
-        student_prob_scores = {pid: 0 for pid in problems}
-        row_values = []
-        
+
         for pid in problems:
-            row_values.append(0) 
-            idx_of_prob_total = len(row_values) - 1
+            p_meta = problem_meta.get(pid, {})
+            is_teamwork = p_meta.get("is_teamwork", False)
+
+            p_total_idx = len(row)
+            row.append(0)
+
+            personal_rate_idx = None
+            team_total_idx = None
+            team_rate_idx = None
+            if is_teamwork:
+                personal_rate_idx = len(row)
+                row.append(0)
+                team_total_idx = len(row)
+                row.append(0)
+                team_rate_idx = len(row)
+                row.append(0)
+
             p_total = 0
-            
-            script = load_problem_script(pid)
-            if script and hasattr(script, "meta"):
-                meta = ensure_meta_inputs(script.meta)
-                inputs_meta = meta.get("inputs", {})
-            else:
-                inputs_meta = {}
-            
-            for iid, conf in inputs_meta.items():
-                max_val = conf.get("score", DEFAULT_INPUT_SCORE)
-                att = att_map.get((s.student_id, pid, iid))
+            team_id = member_team_map.get((pid, s.student_id)) if is_teamwork else None
+            claim_sub = claim_map.get((pid, team_id, s.student_id)) if is_teamwork and team_id else None
+
+            for iid, max_val in p_meta.get("input_items", []):
                 score = 0
-                if att and att.correct:
-                    score = max_val
-                
-                row_values.append(score)
+                if is_teamwork:
+                    mapped_sub = p_meta.get("input_sub_map", {}).get(iid)
+                    if claim_sub is not None and mapped_sub == claim_sub:
+                        att = team_att_map.get((s.student_id, pid, iid))
+                        if att and att.correct:
+                            score = max_val
+                else:
+                    att = att_map.get((s.student_id, pid, iid))
+                    if att and att.correct:
+                        score = max_val
+
+                row.append(score)
                 p_total += score
-            
-            row_values[idx_of_prob_total] = p_total
-            student_prob_scores[pid] = p_total
+
+            row[p_total_idx] = p_total
             current_total += p_total
-            
+
+            if is_teamwork:
+                personal_possible = p_meta.get("sub_total_scores", {}).get(claim_sub, 0) if claim_sub is not None else 0
+                personal_rate = round((p_total / personal_possible) * 100, 1) if personal_possible > 0 else 0
+                team_total = team_score_map.get((pid, team_id), 0) if team_id else 0
+                prob_total_possible = p_meta.get("total_possible", 0)
+                team_rate = round((team_total / prob_total_possible) * 100, 1) if prob_total_possible > 0 else 0
+
+                row[personal_rate_idx] = personal_rate
+                row[team_total_idx] = team_total
+                row[team_rate_idx] = team_rate
+
         row[2] = current_total
-        row.extend(row_values)
         writer.writerow(row)
-        
+
     output.seek(0)
     content_bytes = output.getvalue().encode("utf-8-sig")
     
@@ -413,7 +843,24 @@ def export_work(session: Session = Depends(get_session), token: str = Query(...)
     zip_buffer = io.BytesIO()
     
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        
+        teamwork_configs = session.exec(select(TeamWorkConfig)).all()
+        teamwork_config_map = {c.problem_id: c for c in teamwork_configs}
+
+        all_team_attempts = session.exec(select(TeamAttempt)).all()
+        team_attempt_map = {}
+        for a in all_team_attempts:
+            if a.student_id not in team_attempt_map:
+                team_attempt_map[a.student_id] = {}
+            if a.problem_id not in team_attempt_map[a.student_id]:
+                team_attempt_map[a.student_id][a.problem_id] = {}
+            team_attempt_map[a.student_id][a.problem_id][a.input_id] = a
+
+        all_team_members = session.exec(select(TeamMember)).all()
+        member_team_map = {(m.problem_id, m.student_id): m.team_id for m in all_team_members}
+
+        all_claims = session.exec(select(TeamSubproblemClaim)).all()
+        claim_map = {(c.problem_id, c.team_id, c.student_id): c.subproblem_no for c in all_claims}
+
         all_attempts = session.exec(select(Attempt)).all()
         mega_map = {}
         for a in all_attempts:
@@ -441,13 +888,41 @@ def export_work(session: Session = Depends(get_session), token: str = Query(...)
                 
                 with open(md_path, "r", encoding="utf-8") as f:
                     content = f.read()
-                
-                s_attempts = mega_map.get(s.student_id, {}).get(pid, {})
+
                 if hasattr(script, "meta"):
                     meta = ensure_meta_inputs(script.meta)
-                    meta_inputs = meta.get("inputs", {})
+                    full_meta_inputs = meta.get("inputs", {})
                 else:
+                    full_meta_inputs = {}
+
+                teamwork_cfg = teamwork_config_map.get(pid)
+                if teamwork_cfg:
+                    s_attempts_all = team_attempt_map.get(s.student_id, {}).get(pid, {})
+
+                    team_id = member_team_map.get((pid, s.student_id))
+                    claim_sub = claim_map.get((pid, team_id, s.student_id)) if team_id else None
+
+                    bundle = get_problem_subproblem_bundle(pid, params)
+                    input_sub_map = bundle.get("input_subproblem_map", {})
+
+                    allowed_input_ids = set()
+                    if claim_sub is not None:
+                        for iid, sub_no in input_sub_map.items():
+                            if sub_no == claim_sub:
+                                allowed_input_ids.add(iid)
+
+                    s_attempts = {iid: rec for iid, rec in s_attempts_all.items() if iid in allowed_input_ids}
+
+                    # Keep full input shape for rendering, but zero-out non-claimed inputs in score summary.
                     meta_inputs = {}
+                    for iid, conf in full_meta_inputs.items():
+                        conf_dict = dict(conf) if isinstance(conf, dict) else {}
+                        if iid not in allowed_input_ids:
+                            conf_dict["score"] = 0
+                        meta_inputs[iid] = conf_dict
+                else:
+                    s_attempts = mega_map.get(s.student_id, {}).get(pid, {})
+                    meta_inputs = full_meta_inputs
                 
                 helper = ExportInputHelper(s_attempts, meta_inputs)
                 render_context = {**params, "input": helper}

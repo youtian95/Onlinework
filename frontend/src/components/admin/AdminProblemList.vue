@@ -64,12 +64,11 @@
                                     </button>
                                     
                                     <button 
-                                        v-if="!isTerminated(p)"
-                                        @click="manualTerminate(p)" 
+                                        @click="toggleTerminate(p)" 
                                         class="icon-btn" 
-                                        title="立即截止"
+                                        :title="isTerminated(p) ? '重新开放' : '立即截止'"
                                     >
-                                        🛑
+                                        {{ isTerminated(p) ? '🔓' : '🛑' }}
                                     </button>
 
                                     <button @click="viewRanking(p)" class="icon-btn" title="查看排名">🏆</button>
@@ -214,7 +213,14 @@ const toggleGuest = (p) => {
     updateProblemState(p, { is_public_view: !p.is_public_view })
 }
 
-const manualTerminate = (p) => {
+const toggleTerminate = (p) => {
+    if (isTerminated(p)) {
+        if (confirm(`确定要重新开放题目 ${p.id} 吗？`)) {
+            updateProblemState(p, { deadline: null })
+        }
+        return
+    }
+
     if (confirm(`确定要立即截止题目 ${p.id} 吗？`)) {
         updateProblemState(p, { deadline: new Date().toISOString() })
     }
