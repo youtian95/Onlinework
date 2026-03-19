@@ -464,6 +464,7 @@ def high_strength_friction_single_shear_capacity(
     standard: str = "GB50017-2017",
 ) -> HighStrengthFrictionShearCapacity:
     """计算高强螺栓摩擦型单栓抗剪承载力，公式为 N_v^b = 0.9*n_f*mu*P。"""
+
     if friction_coefficient <= 0:
         raise ValueError("friction_coefficient must be > 0")
     if slip_surface_count <= 0:

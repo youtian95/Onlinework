@@ -121,7 +121,6 @@
 ### 本地调试项目
 
 - 克隆代码。
-  如果是Github私有仓库，需要在1Panel中SSH管理里面`密钥信息`创建一个新的SSH密钥对，把公钥添加到Github设置的SSH Keys里，才能直接在服务器上使用git命令克隆代码。或者也可以在本地克隆后通过FTP工具上传到服务器指定目录。
 
   ```bash
   git clone
@@ -158,13 +157,15 @@
 
 #### 1. 获取代码
 
-通过 SSH 登录服务器，将代码克隆到指定目录（例如 `/opt/onlinework`）：
+通过 SSH 登录服务器，将代码克隆到指定目录（例如 `/opt/onlinework`）。
 
 ```bash
 cd /opt
 git clone https://github.com/你的用户名/你的仓库名.git onlinework
 cd onlinework
 ```
+
+如果是Github私有仓库，需要在1Panel中SSH管理里面`密钥信息`创建一个新的SSH密钥对名字必须是默认的`id_ed25519`，把公钥添加到Github设置的SSH Keys里，才能直接在服务器上使用git命令克隆代码。或者也可以在本地克隆后通过FTP工具上传到服务器指定目录。
 
 #### 2. 配置文件
 
@@ -183,11 +184,27 @@ cd onlinework
 
 #### 3. 启动服务
 
-- 在1panel的容器编排中选择文件 `/opt/Onlinework/docker-compose.yml`，就会自动部署。
+- 修改端口
+
+  默认情况下，系统在 `5050` 端口运行。如果该端口被占用，可以修改 `docker-compose.yml` 中的端口映射，例如改为 `6060`：
+
+  ```yaml
+  ports:
+    - "6060:80"
+  ```
+
+- 修改容器名字，如果服务器上已经有同名容器，可能会导致部署失败。
+
+- 部署容器
+
+  ```bash
+  docker compose up -d --build
+  ```
+
 - 直接访问 `http://服务器IP:5050`已经可以看到系统，后面添加域名和 HTTPS。
 - 在阿里云中添加域名解析`njtechsteel.youtian95.cn`，指向服务器 IP。
 - 在1panel中添加网站，反向代理到 `http://localhost:5050`。
-- 使用 1Panel 的 SSL 功能为该网站申请免费的 HTTPS 证书。
+- 使用 1Panel 的`网站`-`证书`功能为该网站申请免费的 HTTPS 证书。
 - 网站开启 HTTPS，选择上一步的证书。
 
 #### 4. 后续更新

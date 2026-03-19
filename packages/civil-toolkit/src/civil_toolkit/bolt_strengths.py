@@ -183,7 +183,10 @@ def get_bolt_bearing_strength_by_component_steel(
     bolt_class: str = "AB",
     standard: str = "GB50017-2017",
 ) -> BoltStrengthIndex:
-    """按构件钢材牌号和螺栓类别查连接承压强度设计值。"""
+    """按构件钢材牌号和螺栓类别查连接承压强度设计值。
+    - steel_grade: 构件钢材牌号，如 Q235、Q355 等。
+    - bolt_class: 螺栓类别，C 代表普通螺栓C级，AB 代表普通螺栓A/B级，HS 代表承压型高强螺栓或网架用高强螺栓。默认 AB。
+    """
     key = _normalize_grade(steel_grade)
     row = _COMPONENT_STEEL_BEARING_STRENGTH.get(key)
     if not row:

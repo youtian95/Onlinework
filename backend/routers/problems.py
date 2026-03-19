@@ -1084,6 +1084,8 @@ def get_ranking(
 
 
 def submit_answer(req: SubmitRequest, session: Session):
+    submitted_answers = req.answers if isinstance(req.answers, dict) else {}
+
     teamwork_config = _ensure_teamwork_config(session, req.problem_id)
     member = None
 
@@ -1120,15 +1122,39 @@ def submit_answer(req: SubmitRequest, session: Session):
     rng = get_stable_rng(seed)
     params = script.generate(rng)
 
+    # 2.5 组装用于校验的答案：
+    # 单输入框提交时，需要保留历史 last_answer，避免依赖前置输入的 parse_int 读到 None。
+    checker_answers = dict(submitted_answers)
+    if req.student_id:
+        if teamwork_config and member:
+            persisted_attempts = session.exec(
+                select(TeamAttempt).where(
+                    TeamAttempt.student_id == req.student_id,
+                    TeamAttempt.team_id == member.team_id,
+                    TeamAttempt.problem_id == req.problem_id,
+                )
+            ).all()
+        else:
+            persisted_attempts = session.exec(
+                select(Attempt).where(
+                    Attempt.student_id == req.student_id,
+                    Attempt.problem_id == req.problem_id,
+                )
+            ).all()
+
+        for row in persisted_attempts:
+            if row.input_id not in checker_answers and row.last_answer is not None:
+                checker_answers[row.input_id] = row.last_answer
+
     # 3. 验证（新规范：仅执行 NumericCheckTemplate 校验类）
     try:
-        results = run_checker_classes(script, params, req.answers if isinstance(req.answers, dict) else {})
+        results = run_checker_classes(script, params, checker_answers)
     except ValueError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         # 运行期异常兜底：本次提交字段按错误处理，避免整体 500。
         print(f"WARN: checker classes failed for problem {req.problem_id}: {e}")
-        submitted_keys = list(req.answers.keys()) if isinstance(req.answers, dict) else []
+        submitted_keys = list(submitted_answers.keys())
         results = {k: False for k in submitted_keys}
         
     # If guest, return verification results immediately without DB recording
@@ -1148,7 +1174,7 @@ def submit_answer(req: SubmitRequest, session: Session):
     # 这样可以支持单个填空的提交，而不会误伤其他未提交填空的尝试次数
     full_input_ids = get_problem_input_ids(req.problem_id, script)
     unique_full_input_ids = list(set(full_input_ids))
-    submitted_input_ids = [k for k in unique_full_input_ids if k in req.answers]
+    submitted_input_ids = [k for k in unique_full_input_ids if k in submitted_answers]
 
     if teamwork_config:
         claim = _get_student_claim(session, req.problem_id, member.team_id, req.student_id)
@@ -1178,7 +1204,7 @@ def submit_answer(req: SubmitRequest, session: Session):
 
         for input_id in submitted_input_ids:
             max_attempts = meta_inputs.get(input_id, {}).get("max_attempts", DEFAULT_MAX_ATTEMPTS)
-            answer = req.answers.get(input_id, "")
+            answer = submitted_answers.get(input_id, "")
 
             attempt = session.exec(
                 select(TeamAttempt).where(
@@ -1239,7 +1265,7 @@ def submit_answer(req: SubmitRequest, session: Session):
     # 只遍历用户提交了的 ID
     for input_id in submitted_input_ids:
         max_attempts = meta_inputs.get(input_id, {}).get("max_attempts", DEFAULT_MAX_ATTEMPTS)
-        answer = req.answers.get(input_id, "")
+        answer = submitted_answers.get(input_id, "")
 
         attempt = session.exec(
             select(Attempt).where(
