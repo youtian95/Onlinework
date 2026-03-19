@@ -1,3 +1,6 @@
+from backend.services.problem_check_template import NumericCheckTemplate
+
+
 meta = {
     "title": "综合能力测试 (Math/English/Logic)",
     "inputs": {
@@ -15,28 +18,16 @@ def generate(rng):
         "c": rng.randint(1, 100)
     }
 
-def check(params, answers):
-    results = {}
-    
-    # 1. Math
-    try:
-        user_math = int(answers.get('ans_math', '').strip())
-        correct_math = params['a'] * params['b'] + params['c']
-        results['ans_math'] = (user_math == correct_math)
-    except:
-        results['ans_math'] = False
-        
-    # 2. English
-    user_eng = answers.get('ans_english', '').strip().lower()
-    results['ans_english'] = (user_eng == 'apples')
-    
-    # 3. Logic (Fibonacci)
-    # 1,1,2,3,5,8 -> 13
-    user_logic = answers.get('ans_logic', '').strip()
-    results['ans_logic'] = (user_logic == '13')
-    
-    # 4. History
-    user_hist = answers.get('ans_history', '').strip().upper()
-    results['ans_history'] = (user_hist == 'B')
-    
-    return results
+class Demo03Checker(NumericCheckTemplate):
+    def ans_math(self):
+        correct_math = self.params["a"] * self.params["b"] + self.params["c"]
+        return self.is_int_equal("ans_math", correct_math)
+
+    def ans_english(self):
+        return self.text("ans_english").lower() == "apples"
+
+    def ans_logic(self):
+        return self.text("ans_logic") == "13"
+
+    def ans_history(self):
+        return self.text("ans_history").upper() == "B"

@@ -10,9 +10,11 @@ ENV PYTHONUNBUFFERED=1
 
 # 复制依赖文件
 COPY backend/requirements.txt ./backend/
+COPY packages/civil-toolkit/ ./packages/civil-toolkit/
 
 # 安装依赖
-RUN pip install --no-cache-dir -r backend/requirements.txt
+RUN pip install --no-cache-dir -r backend/requirements.txt \
+	&& pip install --no-cache-dir -e ./packages/civil-toolkit
 
 # 复制后端代码
 # 注意：假设构建上下文是项目根目录，所以复制 backend 文件夹

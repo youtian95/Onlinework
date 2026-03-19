@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "civil-toolkit"
+version = "0.1.0"
+description = "Civil engineering lookup tables and calculation helpers"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GNU General Public License v3.0" }
+authors = [
+  { name = "Tian You @ youtian95.cn" }
+]
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/civil_toolkit"]

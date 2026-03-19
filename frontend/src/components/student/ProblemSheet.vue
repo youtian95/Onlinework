@@ -16,8 +16,12 @@
           <div class="subproblem-header-row">
             <div class="subproblem-main">
               <span class="subproblem-index">子题 {{ segment.subproblem_no }}</span>
-              <span class="subproblem-title">{{ blockOf(segment.subproblem_no).title || `第 ${segment.subproblem_no} 题` }}</span>
-              <span class="subproblem-state">{{ getStateText(blockOf(segment.subproblem_no)) }}</span>
+              <span
+                class="meta-chip"
+                :class="claimChipClass(segment.subproblem_no)"
+              >
+                {{ claimText(segment.subproblem_no) }}
+              </span>
             </div>
             <div class="subproblem-actions">
               <button type="button" class="collapse-btn" @click="emit('toggle-subproblem', segment.subproblem_no)">
@@ -34,15 +38,6 @@
                 {{ getClaimText(blockOf(segment.subproblem_no)) }}
               </button>
             </div>
-          </div>
-
-          <div class="subproblem-meta-row">
-            <span v-if="claimOf(segment.subproblem_no)?.student_id === studentId" class="meta-chip mine">我负责</span>
-            <span v-else-if="claimOf(segment.subproblem_no)" class="meta-chip teammate">
-              {{ claimOf(segment.subproblem_no)?.name || claimOf(segment.subproblem_no)?.student_id }} 负责
-            </span>
-            <span v-else class="meta-chip available">尚未认领</span>
-            <span class="meta-chip neutral">{{ blockOf(segment.subproblem_no).input_ids.length }} 个输入框</span>
           </div>
 
           <div
@@ -71,8 +66,12 @@
           <div class="subproblem-header-row">
             <div class="subproblem-main">
               <span class="subproblem-index">子题 {{ block.subproblem_no }}</span>
-              <span class="subproblem-title">{{ block.title || `第 ${block.subproblem_no} 题` }}</span>
-              <span class="subproblem-state">{{ getStateText(block) }}</span>
+              <span
+                class="meta-chip"
+                :class="claimChipClass(block.subproblem_no)"
+              >
+                {{ claimText(block.subproblem_no) }}
+              </span>
             </div>
             <div class="subproblem-actions">
               <button type="button" class="collapse-btn" @click="emit('toggle-subproblem', block.subproblem_no)">
@@ -89,15 +88,6 @@
                 {{ getClaimText(block) }}
               </button>
             </div>
-          </div>
-
-          <div class="subproblem-meta-row">
-            <span v-if="claimOf(block.subproblem_no)?.student_id === studentId" class="meta-chip mine">我负责</span>
-            <span v-else-if="claimOf(block.subproblem_no)" class="meta-chip teammate">
-              {{ claimOf(block.subproblem_no)?.name || claimOf(block.subproblem_no)?.student_id }} 负责
-            </span>
-            <span v-else class="meta-chip available">尚未认领</span>
-            <span class="meta-chip neutral">{{ block.input_ids.length }} 个输入框</span>
           </div>
 
           <div
@@ -179,11 +169,29 @@ const sheetRootRef = ref(null)
 const blockOf = (subproblemNo) => props.subproblemMap?.[subproblemNo] || null
 const isOpen = (subproblemNo) => props.isSubproblemOpen(subproblemNo)
 const getCardClass = (block) => props.getSubproblemCardClass(block)
-const getStateText = (block) => props.getSubproblemStateText(block)
 const getClaimKind = (block) => props.getClaimButtonKind(block)
 const isClaimDisabled = (block) => props.isClaimButtonDisabled(block)
 const getClaimText = (block) => props.getClaimButtonText(block)
 const claimOf = (subproblemNo) => props.getClaimForSubproblem(subproblemNo)
+
+const claimText = (subproblemNo) => {
+  const claim = claimOf(subproblemNo)
+  if (!claim) {
+    return '尚未认领'
+  }
+  return `${claim.name || claim.student_id} 负责`
+}
+
+const claimChipClass = (subproblemNo) => {
+  const claim = claimOf(subproblemNo)
+  if (!claim) {
+    return 'available'
+  }
+  if (claim.student_id === props.studentId) {
+    return 'mine'
+  }
+  return 'teammate'
+}
 
 defineExpose({
   getRootEl: () => sheetRootRef.value,
@@ -260,6 +268,7 @@ defineExpose({
   justify-content: space-between;
   gap: 16px;
   align-items: center;
+  padding-bottom: 10px;
 }
 
 .subproblem-main {
@@ -302,27 +311,9 @@ defineExpose({
   font-weight: 700;
 }
 
-.subproblem-title {
-  font-size: 18px;
-  font-weight: 700;
-  color: #0f172a;
-}
-
-.subproblem-state {
-  color: #64748b;
-  font-size: 14px;
-}
-
-.subproblem-meta-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin: 14px 0 16px;
-}
-
 .meta-chip {
   border-radius: 999px;
-  padding: 7px 12px;
+  padding: 6px 11px;
   font-size: 13px;
   font-weight: 600;
 }

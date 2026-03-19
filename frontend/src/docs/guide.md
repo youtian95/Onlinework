@@ -61,7 +61,7 @@
         ```
 
 2. **题目批改逻辑编写（script.py）**：
-    - Python 脚本包含三个部分：`meta`（元数据）、`generate`（参数生成）、`check`（答案校验）。
+    - Python 脚本包含三个部分：`meta`（元数据）、`generate`（参数生成）、`Checker 类`（答案校验）。
     - **`meta` 变量（必填，`inputs` 可省略）**：定义题目名称和每个填空的配置（最大尝试次数、分值）。
         - 若 `inputs` 未填写，系统默认使用空对象 `{}`。
         - 单个填空未配置 `max_attempts` 时默认 3 次；未配置 `score` 时默认 1 分。
@@ -69,13 +69,16 @@
         - 接收 `rng`（一个基于学号固定的随机数生成器）。
         - 使用 `rng.randint(min, max)` 等方法生成随机数。
         - 返回一个字典，包含 `problem.md` 中需要的变量（如 `a`, `b`）。
-    - **`check` 函数（必填）**：
-        - 接收 `params`（生成的参数）和 `user_answers`（学生提交的答案）。
-        - 校验逻辑：验证学生填写的 `user_answers['id']` 是否等于预期结果。
-        - 返回一个字典，包含每个 ID 的 `True`（正确）或 `False`（错误）状态。
+    - **`Checker 类`（必填，必须继承 `NumericCheckTemplate`）**：
+        - 必须为每个输入框写一个“同名函数”。
+        - 例如 `<input id="ans_1" />` 对应 `def ans_1(self): ...`。
+        - 每个函数返回 `True` 或 `False`。
+        - 系统会自动执行这些同名函数（除了以 `_` 开头的函数都会被执行），并汇总成每个输入 ID 对应的 `True/False` 字典。
     - 示例代码：
 
     ```python
+    from backend.services.problem_check_template import NumericCheckTemplate
+
     meta = {
         "title": "整数加法练习",
         "inputs": {
@@ -90,16 +93,24 @@
             "b": rng.randint(10, 99)
         }
 
-    def check(params, user_answers):
-        # 计算正确答案
-        correct_ans = params["a"] + params["b"]
-        # 获取用户输入（注意全是字符串，需要转换）
-        user_val = int(user_answers.get("ans_1", 0))
-        # 返回校验结果
-        return {
-            "ans_1": user_val == correct_ans
-        }
+    class AddChecker(NumericCheckTemplate):
+        def ans_1(self):
+            correct_ans = self.params["a"] + self.params["b"]
+            return self.is_int_equal("ans_1", correct_ans)
     ```
+
+    - 这是唯一支持的写法：
+        - 例如 `<input id="ans_1" />` 对应 `def ans_1(self): ...`。
+        - 函数返回 `True` 或 `False` 即可。
+        - 函数内部可以直接写普通 Python 计算，例如 `+ - * / **`。
+        - 如果某一步因为空值、格式错误、除零等原因抛出异常，系统会自动把这个输入框判为 `False`。
+    - 常用方法：
+        - `self.parse_float(key)`：读取并解析浮点数，解析失败直接抛异常。
+        - `self.parse_int(key)`：读取并解析整数，解析失败直接抛异常。
+        - `self.text(key)`：读取文本，空值或空字符串会抛异常。
+        - `self.is_close(key, expected, tol=1e-2)`：按浮点容差返回 `True/False`。
+        - `self.is_int_equal(key, expected)`：按整数相等返回 `True/False`。
+        - `self.is_int_range(key, low, high)`：按整数范围返回 `True/False`。
 
 #### 出题测试
 
@@ -109,7 +120,8 @@
 
 ### 本地调试项目
 
-- 克隆代码
+- 克隆代码。
+  如果是Github私有仓库，需要在1Panel中SSH管理里面`密钥信息`创建一个新的SSH密钥对，把公钥添加到Github设置的SSH Keys里，才能直接在服务器上使用git命令克隆代码。或者也可以在本地克隆后通过FTP工具上传到服务器指定目录。
 
   ```bash
   git clone
@@ -121,6 +133,7 @@
     conda create -p ./.env python=3.12 -y
     conda activate ./.env
     pip install -r backend/requirements.txt
+    pip install -e ./packages/civil-toolkit
     cd frontend
     npm install
     cd .. 

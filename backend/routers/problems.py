@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Header, UploadFile, File
+from fastapi import APIRouter, HTTPException, Depends, Header, UploadFile, File, Query
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select, delete
 from typing import Dict, Optional
@@ -28,6 +28,7 @@ from backend.core.security import verify_token
 from backend.core.config import PUBLIC_DIR
 from backend.services.problems import (
     load_problem_script, 
+    run_checker_classes,
     require_student, 
     get_problem_content_and_status, 
     get_problem_subproblem_bundle,
@@ -1119,24 +1120,14 @@ def submit_answer(req: SubmitRequest, session: Session):
     rng = get_stable_rng(seed)
     params = script.generate(rng)
 
-    # 3. 验证
-    if not hasattr(script, "check"):
-        raise HTTPException(status_code=500, detail="Problem script missing check function")
-
-    class SafeAnswers(dict):
-        def get(self, key, default=None):
-            val = super().get(key, default)
-            # 处理 None、空字符串或只包含空白字符的字符串
-            if val is None or str(val).strip() == "":
-                return "0"
-            return val
-
+    # 3. 验证（新规范：仅执行 NumericCheckTemplate 校验类）
     try:
-        results = script.check(params, SafeAnswers(req.answers))
+        results = run_checker_classes(script, params, req.answers if isinstance(req.answers, dict) else {})
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        # 容错：题目脚本在单字段提交或异常输入下抛错时，
-        # 不让整个接口 500，而是将本次提交字段判为错误。
-        print(f"WARN: check() failed for problem {req.problem_id}: {e}")
+        # 运行期异常兜底：本次提交字段按错误处理，避免整体 500。
+        print(f"WARN: checker classes failed for problem {req.problem_id}: {e}")
         submitted_keys = list(req.answers.keys()) if isinstance(req.answers, dict) else []
         results = {k: False for k in submitted_keys}
         
@@ -1307,9 +1298,22 @@ def submit_answer(req: SubmitRequest, session: Session):
 def get_problem_resource(
     problem_id: str,
     filename: str,
+    token: Optional[str] = Query(None),
     current_student: Optional[Student] = Depends(get_optional_current_student),
     session: Session = Depends(get_session)
 ):
+    if not current_student and token:
+        parsed_token = token.split(" ", 1)[1] if token.startswith("Bearer ") else token
+        payload = verify_token(parsed_token)
+        if payload:
+            student_id_from_token = payload.get("sub")
+            if student_id_from_token:
+                student = session.exec(
+                    select(Student).where(Student.student_id == student_id_from_token)
+                ).first()
+                if student and student.enabled:
+                    current_student = student
+
     # 1. Access Check
     state = session.exec(select(ProblemState).where(ProblemState.problem_id == problem_id)).first()
     student_id = current_student.student_id if current_student else None

@@ -1,3 +1,6 @@
+from backend.services.problem_check_template import NumericCheckTemplate
+
+
 meta = {
     "title": "团队作业 Demo 01",
     "teamwork": {
@@ -25,22 +28,12 @@ def generate(rng):
     }
 
 
-def check(params, answers):
-    results = {}
+class DemoTeam01Checker(NumericCheckTemplate):
+    def alpha_answer(self):
+        return self.is_int_equal("alpha_answer", self.params["x"] + self.params["y"])
 
-    try:
-        results["alpha_answer"] = int(answers.get("alpha_answer", "")) == (params["x"] + params["y"])
-    except Exception:
-        results["alpha_answer"] = False
+    def beta_answer(self):
+        return self.is_int_equal("beta_answer", self.params["m"] * self.params["n"])
 
-    try:
-        results["beta_answer"] = int(answers.get("beta_answer", "")) == (params["m"] * params["n"])
-    except Exception:
-        results["beta_answer"] = False
-
-    try:
-        results["gamma_answer"] = int(answers.get("gamma_answer", "")) == (params["p"] - params["q"])
-    except Exception:
-        results["gamma_answer"] = False
-
-    return results
+    def gamma_answer(self):
+        return self.is_int_equal("gamma_answer", self.params["p"] - self.params["q"])

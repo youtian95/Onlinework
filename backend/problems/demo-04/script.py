@@ -1,3 +1,6 @@
+from backend.services.problem_check_template import NumericCheckTemplate
+
+
 # 题目元数据
 meta = {
     "title": "整数加法练习",
@@ -19,33 +22,11 @@ def generate(rng):
         "b": b
     }
 
-def check(params, user_answers):
-    """
-    检查答案
-        params: 已经生成好的题目参数 {'a': 12, 'b': 34, ...}
-        user_answers: 用户提交的答案字典 {'ans_1': 'answer', ...}
+class Demo04Checker(NumericCheckTemplate):
+    def ans_1(self):
+        correct_sum = self.params["a"] + self.params["b"]
+        return self.is_int_equal("ans_1", correct_sum)
 
-    return: 
-        结果字典 {'ans_1': True/False, ...}
-    """
-    correct_sum = params['a'] + params['b']
-    correct_minus = params['a'] - params['b']
-    
-    results = {}
-    
-    # 检查 ans_1
-    val_1 = user_answers.get("ans_1", str(correct_sum + 1000)) # 默认错误
-    val_2 = user_answers.get("ans_2", str(correct_minus + 1000))
-    try:
-        if int(val_1) == correct_sum:
-            results["ans_1"] = True
-        else:
-            results["ans_1"] = False
-        if int(val_2) == correct_minus:
-            results["ans_2"] = True
-        else: 
-            results["ans_2"] = False
-    except ValueError:
-        results["ans_1"] = False
-        results["ans_2"] = False
-    return results
+    def ans_2(self):
+        correct_minus = self.params["a"] - self.params["b"]
+        return self.is_int_equal("ans_2", correct_minus)

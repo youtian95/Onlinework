@@ -105,7 +105,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, nextTick, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import { marked } from 'marked'
@@ -122,6 +122,7 @@ const router = useRouter()
 const studentId = localStorage.getItem('studentId') || ''
 const token = localStorage.getItem('studentToken') || ''
 const problemId = route.params.id
+const scrollStorageKey = `problem-detail-scroll:${studentId || 'guest'}:${problemId}`
 
 const loading = ref(true)
 const renderedContent = ref('')
@@ -150,6 +151,35 @@ const openSubproblems = ref([])
 const problemSheetRef = ref(null)
 const showTeamPanel = ref(false)
 let bindScheduled = false
+
+const saveScrollPosition = () => {
+  try {
+    const y = Math.max(0, Math.round(window.scrollY || window.pageYOffset || 0))
+    sessionStorage.setItem(scrollStorageKey, String(y))
+  } catch {
+    // ignore storage failures
+  }
+}
+
+const restoreScrollPosition = () => {
+  try {
+    const raw = sessionStorage.getItem(scrollStorageKey)
+    if (!raw) return
+    const y = Number(raw)
+    if (!Number.isFinite(y) || y < 0) return
+    window.scrollTo({ top: y, left: 0, behavior: 'auto' })
+  } catch {
+    // ignore storage failures
+  }
+}
+
+const restoreScrollPositionStable = () => {
+  // Restore multiple times to handle late layout changes (images/async render).
+  restoreScrollPosition()
+  requestAnimationFrame(() => restoreScrollPosition())
+  setTimeout(() => restoreScrollPosition(), 120)
+  setTimeout(() => restoreScrollPosition(), 300)
+}
 
 const metaInputs = computed(() => {
   const inputs = meta.value?.inputs
@@ -282,7 +312,10 @@ const createRenderer = () => {
   renderer.image = (href, title, text) => {
     if (href && !href.startsWith('http') && !href.startsWith('//') && !href.startsWith('data:')) {
       const cleanHref = href.startsWith('/') ? href.slice(1) : href
-      return originalImage(`${API_BASE_URL}/problems/${problemId}/${cleanHref}`, title, text)
+      const baseUrl = `${API_BASE_URL}/problems/${problemId}/${cleanHref}`
+      const sep = baseUrl.includes('?') ? '&' : '?'
+      const authedUrl = token ? `${baseUrl}${sep}token=${encodeURIComponent(token)}` : baseUrl
+      return originalImage(authedUrl, title, text)
     }
     return originalImage(href, title, text)
   }
@@ -427,7 +460,16 @@ const loadPage = async () => {
 }
 
 onMounted(async () => {
+  window.addEventListener('scroll', saveScrollPosition, { passive: true })
+  window.addEventListener('beforeunload', saveScrollPosition)
   await loadPage()
+  restoreScrollPositionStable()
+})
+
+onBeforeUnmount(() => {
+  saveScrollPosition()
+  window.removeEventListener('scroll', saveScrollPosition)
+  window.removeEventListener('beforeunload', saveScrollPosition)
 })
 
 const isSubproblemOpen = (subproblemNo) => openSubproblems.value.includes(subproblemNo)
@@ -865,12 +907,12 @@ const submitSingleAnswer = async (inputId) => {
 
 .problem-input-field {
   border: 1px solid #d7dee8;
-  border-radius: 12px;
-  padding: 8px 12px;
-  margin: 0 4px;
-  width: 112px;
+  border-radius: 10px;
+  padding: 6px 10px;
+  margin: 0 3px;
+  width: 96px;
   font-family: inherit;
-  font-size: 0.95em;
+  font-size: 0.9em;
   text-align: center;
   transition: all 0.25s;
   background: #ffffff;
@@ -910,7 +952,7 @@ const submitSingleAnswer = async (inputId) => {
   position: relative;
   vertical-align: middle;
   align-items: center;
-  margin: 0 4px;
+  margin: 3px 3px;
 }
 
 .attempt-info {
@@ -1253,6 +1295,12 @@ const submitSingleAnswer = async (inputId) => {
 }
 
 @media (max-width: 840px) {
+  .problem-input-field {
+    width: 88px;
+    padding: 5px 8px;
+    font-size: 0.86em;
+  }
+
   .problem-container {
     padding: 0 14px 20px;
   }

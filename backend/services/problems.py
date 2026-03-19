@@ -4,13 +4,15 @@
 import os
 import re
 import time
+import inspect
 import importlib.util
-from typing import Dict
+from typing import Dict, Any
 from jinja2 import Template
 from sqlmodel import Session, select
 from datetime import datetime, timezone
 from fastapi import HTTPException
 from backend.utils import get_stable_rng
+from backend.services.problem_check_template import NumericCheckTemplate
 from backend.models import (
     Student,
     Attempt,
@@ -226,7 +228,50 @@ def load_problem_script(problem_id: str):
         spec.loader.exec_module(module)
     except FileNotFoundError:
         return None
+
     return module
+
+
+def get_checker_classes(script_module):
+    checker_classes = []
+    if not script_module:
+        return checker_classes
+
+    for obj in script_module.__dict__.values():
+        if not inspect.isclass(obj):
+            continue
+        if obj is NumericCheckTemplate:
+            continue
+        if getattr(obj, "__module__", None) != script_module.__name__:
+            continue
+        if issubclass(obj, NumericCheckTemplate):
+            checker_classes.append(obj)
+
+    checker_classes.sort(key=lambda cls: (getattr(cls, "order", 0), cls.__name__))
+    return checker_classes
+
+
+def run_checker_classes(script_module, params: Dict[str, Any], user_answers: Dict[str, Any]):
+    checker_classes = get_checker_classes(script_module)
+    if not checker_classes:
+        raise ValueError("Problem script must define at least one class inheriting NumericCheckTemplate")
+
+    merged_results: Dict[str, bool] = {}
+    for checker_cls in checker_classes:
+        if checker_cls.run is not NumericCheckTemplate.run:
+            raise ValueError(
+                f"Checker class {checker_cls.__name__} must use one method per input id and must not override run()"
+            )
+        checker = checker_cls(params, user_answers)
+        run_method = getattr(checker, "run", None)
+        if not callable(run_method):
+            raise ValueError(f"Checker class {checker_cls.__name__} must define a run() method")
+        result = run_method()
+        if not isinstance(result, dict):
+            raise ValueError(f"Checker class {checker_cls.__name__}.run() must return a dict")
+        merged_results.update(result)
+
+    return merged_results
 
 def require_student(session: Session, student_id: str) -> Student:
     if not student_id:
