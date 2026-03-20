@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Header, Form
+from fastapi.responses import FileResponse
 from sqlmodel import Session, select, delete
 from pydantic import BaseModel
 from backend.db import engine
@@ -17,6 +18,7 @@ from backend.utils import get_stable_rng
 from backend.services.problems import (
     load_problem_script,
     PROBLEMS_DIR,
+    get_problem_content_and_status,
     get_problem_ranking,
     get_teamwork_personal_ranking,
     get_teamwork_team_ranking,
@@ -72,6 +74,18 @@ def get_session():
     with Session(engine) as session:
         yield session
 
+
+def _verify_admin_token_value(token: Optional[str]):
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing Token")
+
+    payload = verify_token(token)
+    if payload and payload.get("role") == "admin":
+        return payload
+
+    raise HTTPException(status_code=401, detail="Unauthorized")
+
+
 # 管理员鉴权依赖
 def verify_admin(
     x_admin_token: str = Header(None),
@@ -85,12 +99,7 @@ def verify_admin(
 
     if not token:
         raise HTTPException(status_code=401, detail="Missing Token")
-
-    payload = verify_token(token)
-    if payload and payload.get("role") == "admin":
-        return payload
-        
-    raise HTTPException(status_code=401, detail="Unauthorized")
+    return _verify_admin_token_value(token)
 
 
 def _extract_teamwork_meta(problem_id: str) -> dict:
@@ -143,6 +152,179 @@ def _has_teamwork_data(session: Session, problem_id: str) -> bool:
     if session.exec(select(TeamSubmission.id).where(TeamSubmission.problem_id == problem_id)).first() is not None:
         return True
     return False
+
+
+def _parse_positive_int(value, field_name: str) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"{field_name} must be an integer")
+
+    if parsed <= 0:
+        raise HTTPException(status_code=400, detail=f"{field_name} must be > 0")
+
+    return parsed
+
+
+def _sync_team_rows(session: Session, problem_id: str, team_count: int, team_size: int):
+    existing_teams = session.exec(
+        select(Team).where(Team.problem_id == problem_id).order_by(Team.team_no)
+    ).all()
+    teams_by_no = {team.team_no: team for team in existing_teams}
+
+    removed_team_ids = [team.id for team in existing_teams if team.team_no > team_count and team.id is not None]
+    if removed_team_ids:
+        session.exec(
+            delete(TeamSubmission).where(
+                TeamSubmission.problem_id == problem_id,
+                TeamSubmission.team_id.in_(removed_team_ids),
+            )
+        )
+        session.exec(
+            delete(TeamAttempt).where(
+                TeamAttempt.problem_id == problem_id,
+                TeamAttempt.team_id.in_(removed_team_ids),
+            )
+        )
+        session.exec(
+            delete(TeamSubproblemClaim).where(
+                TeamSubproblemClaim.problem_id == problem_id,
+                TeamSubproblemClaim.team_id.in_(removed_team_ids),
+            )
+        )
+        session.exec(
+            delete(TeamMember).where(
+                TeamMember.problem_id == problem_id,
+                TeamMember.team_id.in_(removed_team_ids),
+            )
+        )
+        session.exec(delete(Team).where(Team.id.in_(removed_team_ids)))
+
+    for team_no in range(1, team_count + 1):
+        team = teams_by_no.get(team_no)
+        if team:
+            team.max_members = team_size
+            if not team.name:
+                team.name = f"第{team_no}队"
+            continue
+
+        session.add(
+            Team(
+                problem_id=problem_id,
+                team_no=team_no,
+                name=f"第{team_no}队",
+                max_members=team_size,
+            )
+        )
+
+
+def _save_teamwork_config(
+    session: Session,
+    problem_id: str,
+    team_count: Optional[int],
+    team_size: Optional[int],
+):
+    config = session.exec(
+        select(TeamWorkConfig).where(TeamWorkConfig.problem_id == problem_id)
+    ).first()
+
+    if not config:
+        if team_count is None or team_size is None:
+            raise HTTPException(status_code=400, detail="team_count and team_size are required for teamwork upload")
+
+        parsed_team_count = _parse_positive_int(team_count, "team_count")
+        parsed_team_size = _parse_positive_int(team_size, "team_size")
+        config = TeamWorkConfig(
+            problem_id=problem_id,
+            team_count=parsed_team_count,
+            team_size=parsed_team_size,
+            subproblem_count=parsed_team_size,
+        )
+        session.add(config)
+        _sync_team_rows(session, problem_id, parsed_team_count, parsed_team_size)
+        session.commit()
+        session.refresh(config)
+        return config, True
+
+    parsed_team_count = config.team_count if team_count is None else _parse_positive_int(team_count, "team_count")
+    parsed_team_size = config.team_size
+
+    if team_size is not None:
+        requested_team_size = _parse_positive_int(team_size, "team_size")
+        if requested_team_size != config.team_size:
+            raise HTTPException(status_code=400, detail="team_size cannot be changed after teamwork is created")
+
+    config.team_count = parsed_team_count
+    config.subproblem_count = config.team_size
+    config.updated_at = datetime.now(timezone.utc)
+    _sync_team_rows(session, problem_id, config.team_count, config.team_size)
+    session.commit()
+    session.refresh(config)
+    return config, False
+
+
+def _build_admin_team_attempt_status(
+    session: Session,
+    problem_id: str,
+    team_id: int,
+    input_ids: list,
+    meta_inputs: dict,
+    input_sub_map: dict,
+):
+    claims = session.exec(
+        select(TeamSubproblemClaim)
+        .where(
+            TeamSubproblemClaim.problem_id == problem_id,
+            TeamSubproblemClaim.team_id == team_id,
+        )
+        .order_by(TeamSubproblemClaim.claimed_at.desc(), TeamSubproblemClaim.id.desc())
+    ).all()
+
+    owner_by_subproblem = {}
+    claimed_students = set()
+    for claim in claims:
+        if claim.student_id in claimed_students:
+            continue
+        if claim.subproblem_no in owner_by_subproblem:
+            continue
+        owner_by_subproblem[claim.subproblem_no] = claim.student_id
+        claimed_students.add(claim.student_id)
+
+    rows = session.exec(
+        select(TeamAttempt)
+        .where(TeamAttempt.problem_id == problem_id, TeamAttempt.team_id == team_id)
+    ).all()
+
+    attempt_map = {}
+    for row in rows:
+        attempt_map[(row.student_id, row.input_id)] = row
+
+    status = {}
+    for input_id in set(input_ids or []):
+        config = meta_inputs.get(input_id, {}) if isinstance(meta_inputs, dict) else {}
+        max_attempts = config.get("max_attempts", DEFAULT_MAX_ATTEMPTS)
+
+        subproblem_no = input_sub_map.get(input_id)
+        owner_student_id = owner_by_subproblem.get(subproblem_no)
+        row = attempt_map.get((owner_student_id, input_id)) if owner_student_id else None
+        attempts = row.attempts if row else 0
+        correct = row.correct if row else False
+        last_answer = row.last_answer if row and row.last_answer is not None else ""
+
+        remaining = 0 if correct else max(0, max_attempts - attempts)
+        locked = (not correct) and attempts >= max_attempts
+
+        status[input_id] = {
+            "attempts": attempts,
+            "remaining": remaining,
+            "correct": correct,
+            "locked": locked,
+            "max_attempts": max_attempts,
+            "last_answer": last_answer,
+            "owner_student_id": owner_student_id,
+        }
+
+    return status
 
 @router.post("/login")
 def admin_login(req: AdminLoginRequest):
@@ -216,6 +398,8 @@ async def upload_problem(
     files: List[UploadFile] = File(...),
     main_script: str = Form(...),
     main_md: str = Form(...),
+    team_count: Optional[int] = Form(None),
+    team_size: Optional[int] = Form(None),
     session: Session = Depends(get_session)
 ):
     # Security checks
@@ -261,6 +445,8 @@ async def upload_problem(
     if script and hasattr(script, "meta"):
         title = script.meta.get("title", problem_id)
 
+    teamwork_meta = _extract_teamwork_meta(problem_id)
+
     # Update or create state
     state = session.exec(select(ProblemState).where(ProblemState.problem_id == problem_id)).first()
     if not state:
@@ -271,7 +457,10 @@ async def upload_problem(
         # Keep existing visible/deadline/deleted states
         pass
     
-    session.commit()
+    if teamwork_meta:
+        _save_teamwork_config(session, problem_id, team_count, team_size)
+    else:
+        session.commit()
 
     return {"message": f"Problem {problem_id} uploaded successfully with {len(saved_files)} files"}
 
@@ -347,29 +536,7 @@ def upsert_teamwork_config(
     if not script:
         raise HTTPException(status_code=404, detail="Problem not found")
 
-    team_count, team_size = _resolve_teamwork_numbers(problem_id, payload)
-    subproblem_count = team_size
-
-    config = session.exec(
-        select(TeamWorkConfig).where(TeamWorkConfig.problem_id == problem_id)
-    ).first()
-
-    if not config:
-        config = TeamWorkConfig(
-            problem_id=problem_id,
-            team_count=team_count,
-            team_size=team_size,
-            subproblem_count=subproblem_count,
-        )
-        session.add(config)
-    else:
-        config.team_count = team_count
-        config.team_size = team_size
-        config.subproblem_count = subproblem_count
-        config.updated_at = datetime.now(timezone.utc)
-
-    session.commit()
-    session.refresh(config)
+    config, created = _save_teamwork_config(session, problem_id, payload.team_count, payload.team_size)
 
     return {
         "message": "Teamwork config saved",
@@ -377,7 +544,7 @@ def upsert_teamwork_config(
         "team_count": config.team_count,
         "team_size": config.team_size,
         "subproblem_count": config.subproblem_count,
-        "rule": "subproblem_count is fixed to team_size",
+        "rule": created and "created with team_count/team_size" or "only team_count can be changed after creation",
     }
 
 
@@ -751,6 +918,107 @@ def get_admin_ranking(problem_id: str, scope: str = "personal", session: Session
         return get_teamwork_personal_ranking(session, problem_id)
 
     return get_problem_ranking(session, problem_id)
+
+
+@router.get('/problems/{problem_id}/content', dependencies=[Depends(verify_admin)])
+def get_admin_problem_content(
+    problem_id: str,
+    student_id: Optional[str] = None,
+    team_id: Optional[int] = None,
+    session: Session = Depends(get_session),
+):
+    state = session.exec(select(ProblemState).where(ProblemState.problem_id == problem_id)).first()
+    teamwork_config = session.exec(
+        select(TeamWorkConfig).where(TeamWorkConfig.problem_id == problem_id)
+    ).first()
+
+    normalized_student_id = (student_id or "").strip() or None
+    if normalized_student_id:
+        student = session.exec(
+            select(Student).where(
+                Student.student_id == normalized_student_id,
+                Student.is_deleted == False,
+            )
+        ).first()
+        if not student:
+            raise HTTPException(status_code=404, detail="Selected student not found")
+
+    if team_id is not None and not teamwork_config:
+        raise HTTPException(status_code=400, detail="This problem is not a teamwork problem")
+
+    deadline = state.deadline if state else None
+    if deadline and deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+
+    render_student_id = normalized_student_id if not teamwork_config else None
+    content = get_problem_content_and_status(session, problem_id, render_student_id)
+
+    if isinstance(content, dict):
+        if teamwork_config:
+            if team_id is not None:
+                team = session.exec(
+                    select(Team).where(Team.problem_id == problem_id, Team.id == team_id)
+                ).first()
+                if not team:
+                    raise HTTPException(status_code=404, detail="Selected team not found")
+
+                meta = content.get("meta", {}) if isinstance(content.get("meta"), dict) else {}
+                meta_inputs = meta.get("inputs", {}) if isinstance(meta.get("inputs"), dict) else {}
+                content["attempt_status"] = _build_admin_team_attempt_status(
+                    session,
+                    problem_id,
+                    team_id,
+                    content.get("input_ids", []),
+                    meta_inputs,
+                    content.get("input_subproblem_map", {}),
+                )
+
+            content["selected_team_id"] = team_id
+            content["teamwork_enabled"] = True
+        else:
+            content["selected_student_id"] = normalized_student_id
+            content["teamwork_enabled"] = False
+
+        content['state'] = {
+            'is_visible': bool(state.is_visible) if state else False,
+            'is_deleted': bool(state.is_deleted) if state else False,
+            'is_public_view': bool(state.is_public_view) if state else False,
+            'deadline': deadline,
+        }
+    return content
+
+
+@router.get('/problems/{problem_id}/files/{filename:path}')
+def get_admin_problem_file(
+    problem_id: str,
+    filename: str,
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = None,
+):
+    auth_token = x_admin_token or token or authorization
+    if auth_token and auth_token.startswith("Bearer "):
+        auth_token = auth_token.split(" ", 1)[1]
+
+    _verify_admin_token_value(auth_token)
+
+    if filename.endswith(".py") or filename.startswith(".") or "__pycache__" in filename:
+        raise HTTPException(status_code=403, detail="Access denied to source files")
+
+    file_path = os.path.join(PROBLEMS_DIR, problem_id, filename)
+
+    try:
+        abs_path = os.path.abspath(file_path)
+        base_path = os.path.abspath(os.path.join(PROBLEMS_DIR, problem_id))
+        if not abs_path.startswith(base_path):
+            raise HTTPException(status_code=403, detail="Invalid path")
+    except Exception:
+        raise HTTPException(status_code=403, detail="Invalid path")
+
+    if not os.path.exists(file_path) or not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(file_path)
 
 @router.get('/ranking', dependencies=[Depends(verify_admin)])
 def get_admin_total_ranking(session: Session = Depends(get_session)):

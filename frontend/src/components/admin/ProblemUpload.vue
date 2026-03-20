@@ -48,6 +48,35 @@
                     <span v-if="successMessage" class="success-msg">{{ successMessage }}</span>
             </div>
             </div>
+
+            <div v-if="showTeamworkModal" class="modal-overlay" @click.self="closeTeamworkModal">
+                <div class="modal-box">
+                    <div class="modal-header">
+                        <h3>配置团队作业</h3>
+                        <button type="button" class="close-btn" @click="closeTeamworkModal">×</button>
+                    </div>
+
+                    <div class="modal-body">
+                        <p class="modal-tip">检测到该题目为团队作业，请设置队伍数量和每队人数。</p>
+
+                        <div class="form-group">
+                            <label>队伍数量</label>
+                            <input v-model="teamworkTeamCount" type="number" min="1" class="text-input" />
+                        </div>
+
+                        <div class="form-group">
+                            <label>每队人数</label>
+                            <input v-model="teamworkTeamSize" type="number" min="1" class="text-input" :disabled="teamworkTeamSizeLocked" />
+                            <div v-if="teamworkTeamSizeLocked" class="help-text">已有团队配置时，人数不可修改。</div>
+                        </div>
+                    </div>
+
+                    <div class="modal-footer">
+                        <button type="button" class="outline-btn" @click="closeTeamworkModal">取消</button>
+                        <button type="button" class="primary-btn" @click="confirmTeamworkUpload">继续上传</button>
+                    </div>
+                </div>
+            </div>
     </div>
 </template>
 
@@ -71,6 +100,11 @@ const mainMd = ref('')
 const uploading = ref(false)
 const fileInput = ref(null)
 const successMessage = ref('')
+const showTeamworkModal = ref(false)
+const teamworkTeamCount = ref('')
+const teamworkTeamSize = ref('')
+const teamworkTeamSizeLocked = ref(false)
+const pendingUploadContext = ref(null)
 
 const pyFiles = computed(() => files.value.filter(f => f.name.endsWith('.py')))
 const mdFiles = computed(() => files.value.filter(f => f.name.endsWith('.md')))
@@ -91,22 +125,131 @@ const checkProblemExists = async (targetProblemId) => {
     return Array.isArray(res.data) && res.data.some(p => p.id === targetProblemId)
 }
 
-const uploadProblem = async () => {
-    if (!canUpload.value) return
-    const normalizedProblemId = problemId.value.trim()
-    if (!normalizedProblemId) return
+const getSelectedMainScriptFile = () => {
+    return files.value.find(f => f.name === mainScript.value) || null
+}
 
+const readSelectedMainScript = async () => {
+    const file = getSelectedMainScriptFile()
+    if (!file) return ''
+    return await file.text()
+}
+
+const parseTeamworkDefaultsFromScript = (content) => {
+    const teamCountMatch = content.match(/["']team_count["']\s*:\s*(\d+)/)
+    const teamSizeMatch = content.match(/["']team_size["']\s*:\s*(\d+)/)
+    return {
+        teamCount: teamCountMatch ? teamCountMatch[1] : '',
+        teamSize: teamSizeMatch ? teamSizeMatch[1] : '',
+    }
+}
+
+const detectTeamworkProblem = async () => {
+    const content = await readSelectedMainScript()
+    return {
+        isTeamwork: /["']teamwork["']\s*:/.test(content),
+        defaults: parseTeamworkDefaultsFromScript(content),
+    }
+}
+
+const fetchExistingTeamworkConfig = async (targetProblemId) => {
+    try {
+        const res = await axios.get(`${API_BASE_URL}/admin/teamwork/${encodeURIComponent(targetProblemId)}/config`, {
+            headers: { 'X-Admin-Token': props.adminToken }
+        })
+        return res.data
+    } catch {
+        return null
+    }
+}
+
+const closeTeamworkModal = () => {
+    showTeamworkModal.value = false
+    pendingUploadContext.value = null
+}
+
+const performUpload = async (context) => {
     uploading.value = true
     successMessage.value = ''
 
     const formData = new FormData()
-    formData.append('problem_id', normalizedProblemId)
+    formData.append('problem_id', context.normalizedProblemId)
     formData.append('main_script', mainScript.value)
     formData.append('main_md', mainMd.value)
-    
+
     files.value.forEach(f => {
         formData.append('files', f)
     })
+
+    if (context.teamwork) {
+        formData.append('team_count', String(context.teamCount))
+        formData.append('team_size', String(context.teamSize))
+    }
+
+    try {
+        await axios.post(`${API_BASE_URL}/admin/problems/upload`, formData, {
+            headers: {
+                'X-Admin-Token': props.adminToken,
+                'Content-Type': 'multipart/form-data'
+            }
+        })
+        successMessage.value = context.isDuplicateProblemId
+            ? `题目 ${context.normalizedProblemId} 已覆盖更新!`
+            : `题目 ${context.normalizedProblemId} 上传成功!`
+
+        const createdProblemId = context.normalizedProblemId
+        problemId.value = ''
+        files.value = []
+        mainScript.value = ''
+        mainMd.value = ''
+        teamworkTeamCount.value = ''
+        teamworkTeamSize.value = ''
+        teamworkTeamSizeLocked.value = false
+        pendingUploadContext.value = null
+        showTeamworkModal.value = false
+        if (fileInput.value) fileInput.value.value = ''
+
+        emit('uploaded', createdProblemId)
+        setTimeout(() => successMessage.value = '', 3000)
+    } catch (e) {
+        console.error(e)
+        if (e.response?.status === 401) emit('logout')
+        else alert('上传失败: ' + (e.response?.data?.detail || '未知错误'))
+    } finally {
+        uploading.value = false
+    }
+}
+
+const confirmTeamworkUpload = async () => {
+    const teamCount = Number(teamworkTeamCount.value)
+    const teamSize = Number(teamworkTeamSize.value)
+
+    if (!Number.isInteger(teamCount) || teamCount <= 0) {
+        alert('请输入有效的队伍数量')
+        return
+    }
+    if (!Number.isInteger(teamSize) || teamSize <= 0) {
+        alert('请输入有效的每队人数')
+        return
+    }
+    if (!pendingUploadContext.value) {
+        closeTeamworkModal()
+        return
+    }
+
+    await performUpload({
+        ...pendingUploadContext.value,
+        teamwork: true,
+        teamCount,
+        teamSize,
+    })
+}
+
+const uploadProblem = async () => {
+    if (!canUpload.value) return
+    const normalizedProblemId = problemId.value.trim()
+    if (!normalizedProblemId) return
+    successMessage.value = ''
     
     try {
         const isDuplicateProblemId = await checkProblemExists(normalizedProblemId)
@@ -119,33 +262,32 @@ const uploadProblem = async () => {
             }
         }
 
-        await axios.post(`${API_BASE_URL}/admin/problems/upload`, formData, {
-            headers: { 
-                'X-Admin-Token': props.adminToken,
-                'Content-Type': 'multipart/form-data'
+        const teamworkInfo = await detectTeamworkProblem()
+        if (teamworkInfo.isTeamwork) {
+            const existingConfig = isDuplicateProblemId
+                ? await fetchExistingTeamworkConfig(normalizedProblemId)
+                : null
+
+            teamworkTeamCount.value = String(existingConfig?.config?.team_count ?? teamworkInfo.defaults.teamCount ?? '')
+            teamworkTeamSize.value = String(existingConfig?.config?.team_size ?? teamworkInfo.defaults.teamSize ?? '')
+            teamworkTeamSizeLocked.value = !!existingConfig?.configured
+            pendingUploadContext.value = {
+                normalizedProblemId,
+                isDuplicateProblemId,
             }
+            showTeamworkModal.value = true
+            return
+        }
+
+        await performUpload({
+            normalizedProblemId,
+            isDuplicateProblemId,
+            teamwork: false,
         })
-        successMessage.value = isDuplicateProblemId
-            ? `题目 ${normalizedProblemId} 已覆盖更新!`
-            : `题目 ${normalizedProblemId} 上传成功!`
-        
-        // Reset form
-        const createdProblemId = normalizedProblemId
-        problemId.value = ''
-        files.value = []
-        mainScript.value = ''
-        mainMd.value = ''
-        if (fileInput.value) fileInput.value.value = ''
-        
-        emit('uploaded', createdProblemId)
-        
-        setTimeout(() => successMessage.value = '', 3000)
     } catch (e) {
         console.error(e)
         if (e.response?.status === 401) emit('logout')
         else alert('上传失败: ' + (e.response?.data?.detail || '未知错误'))
-    } finally {
-        uploading.value = false
     }
 }
 </script>
@@ -221,5 +363,73 @@ const uploadProblem = async () => {
     padding: 24px;
     box-shadow: 0 1px 2px -2px rgba(0,0,0,0.16), 0 3px 6px 0 rgba(0,0,0,0.12), 0 5px 12px 4px rgba(0,0,0,0.09);
     height: fit-content;
+}
+
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.45);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 300;
+}
+
+.modal-box {
+    width: 420px;
+    max-width: calc(100vw - 24px);
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 20px 40px rgba(15, 23, 42, 0.18);
+}
+
+.modal-header,
+.modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 18px;
+}
+
+.modal-header {
+    border-bottom: 1px solid #eef2f7;
+}
+
+.modal-header h3 {
+    margin: 0;
+    font-size: 18px;
+    color: #1f2937;
+}
+
+.modal-body {
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.modal-tip {
+    margin: 0;
+    color: #4b5563;
+    font-size: 14px;
+}
+
+.modal-footer {
+    justify-content: flex-end;
+    gap: 12px;
+    border-top: 1px solid #eef2f7;
+}
+
+.close-btn {
+    border: none;
+    background: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: #94a3b8;
+}
+
+.help-text {
+    font-size: 12px;
+    color: #6b7280;
 }
 </style>

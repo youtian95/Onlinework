@@ -212,8 +212,15 @@ cd onlinework
 当你有新代码提交到 GitHub 后，在服务器上更新：
 
 ```bash
+# `docker-compose.yml`文件如果修改过端口，这里需要先暂存修改
+git stash
+
 # 拉取最新代码（或者手动上传到服务器）
 git pull
+
+# `docker-compose.yml` 改回原来的端口映射
+git stash pop
+
 
 # 2. 重新构建并重启（命令行方式）
 docker compose down

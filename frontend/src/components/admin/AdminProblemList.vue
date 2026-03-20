@@ -20,13 +20,17 @@
                         <th width="100">状态</th>
                         <th width="80">游客</th>
                         <th width="160">截止时间</th>
-                        <th width="280">操作</th>
+                        <th width="220">操作</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr v-for="p in displayedProblems" :key="p.id" :class="{ 'deleted-row': p.is_deleted }">
                         <td>{{ p.id }}</td>
-                        <td>{{ p.title }}</td>
+                        <td>
+                            <button class="problem-title-link" type="button" @click="goToProblemDetail(p)">
+                                {{ p.title }}
+                            </button>
+                        </td>
                         <td>
                             <span v-if="p.is_deleted" class="status-badge status-deleted">已删除</span>
                             <span v-else-if="!p.is_visible" class="status-badge status-draft">草稿</span>
@@ -71,8 +75,6 @@
                                         {{ isTerminated(p) ? '🔓' : '🛑' }}
                                     </button>
 
-                                    <button @click="viewRanking(p)" class="icon-btn" title="查看排名">🏆</button>
-                                    
                                     <button @click="deleteProblem(p)" class="icon-btn danger" title="删除">🗑️</button>
                                 </template>
                                 <template v-else>
@@ -84,44 +86,6 @@
                 </tbody>
             </table>
                 <div v-else class="empty-text">暂无数据</div>
-        </div>
-    </div>
-
-    <!-- Ranking Modal -->
-    <div v-if="showRankingModal" class="modal-overlay" @click.self="closeRankingModal">
-        <div class="modal-box" style="max-width: 600px;">
-                <div class="modal-header">
-                <h2>🏆 排行榜: {{ currentRankingProblem?.title }}</h2>
-                <button class="close-btn" @click="closeRankingModal">×</button>
-            </div>
-                <div class="modal-content">
-                <div v-if="rankingLoading" class="loading">加载中...</div>
-                <div v-else-if="rankingData.length === 0" class="empty">暂无数据</div>
-                <div v-else class="table-container">
-                    <table class="ranking-table">
-                        <thead>
-                            <tr>
-                                <th>排名</th>
-                                <th>学号</th>
-                                <th>姓名</th>
-                                <th>得分</th>
-                                <th>完成时间</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="item in rankingData" :key="item.student_id">
-                                <td>
-                                    <span class="rank-badge" :class="'rank-' + item.rank">{{ item.rank }}</span>
-                                </td>
-                                <td>{{ item.student_id }}</td>
-                                <td>{{ item.name }}</td>
-                                <td class="score-cell">{{ item.score }}</td>
-                                <td class="time-cell">{{ formatTime(item.last_update) }}</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-                </div>
         </div>
     </div>
 
@@ -149,6 +113,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import axios from 'axios'
 
 const props = defineProps({
@@ -156,16 +121,13 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['logout'])
+const router = useRouter()
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 // Problem Stats Data
 const adminProblems = ref([])
 const problemsLoading = ref(false)
-const showRankingModal = ref(false)
-const rankingData = ref([])
-const rankingLoading = ref(false)
-const currentRankingProblem = ref(null)
 
 // Filters
 const showDeleted = ref(false)
@@ -236,6 +198,10 @@ const restoreProblem = (p) => {
     updateProblemState(p, { is_deleted: false })
 }
 
+const goToProblemDetail = (problem) => {
+    router.push(`/admin/problems/${encodeURIComponent(problem.id)}`)
+}
+
 const openDeadlineModal = (p) => {
     editingDeadlineProblem.value = p
     if (p.deadline) {
@@ -282,28 +248,6 @@ const fetchAdminProblems = async () => {
     } finally {
         problemsLoading.value = false
     }
-}
-
-const viewRanking = async (problem) => {
-    currentRankingProblem.value = problem
-    showRankingModal.value = true
-    rankingLoading.value = true
-    rankingData.value = []
-    
-    try {
-         const res = await axios.get(`${API_BASE_URL}/admin/problems/${problem.id}/ranking`, {
-                headers: { 'X-Admin-Token': props.adminToken }
-         })
-         rankingData.value = res.data
-    } catch (e) {
-         alert('获取排名失败')
-    } finally {
-        rankingLoading.value = false
-    }
-}
-
-const closeRankingModal = () => {
-    showRankingModal.value = false
 }
 
 const formatTime = (isoString) => {
@@ -471,6 +415,22 @@ tr:hover {
     color: #ccc;
 }
 
+.problem-title-link {
+    border: none;
+    background: none;
+    color: #2563eb;
+    cursor: pointer;
+    font-size: 14px;
+    text-align: left;
+    padding: 0;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.problem-title-link:hover {
+    color: #1d4ed8;
+}
+
 /* Modal Styles - Reuse or Global */
 .modal-overlay {
     position: fixed;
@@ -516,23 +476,10 @@ tr:hover {
     background: #f5f7fa;
 }
 
-/* Ranking styles */
-.rank-badge {
-    display: inline-block;
-    width: 24px; height: 24px; line-height: 24px;
-    text-align: center; background: #f4f4f5; color: #909399;
-    border-radius: 50%; font-size: 12px; font-weight: bold;
-}
-.rank-1 { background: #ffd700; color: #fff; }
-.rank-2 { background: #c0c0c0; color: #fff; }
-.rank-3 { background: #cd7f32; color: #fff; }
-.score-cell { font-weight: bold; color: #67c23a; font-family: monospace; }
-.time-cell { font-size: 12px; color: #999; }
-</style>
-
 .toggle-switch { position: relative; display: inline-block; width: 40px; height: 20px; }
 .toggle-switch input { opacity: 0; width: 0; height: 0; }
 .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px; }
 .slider:before { position: absolute; content: ''; height: 16px; width: 16px; left: 2px; bottom: 2px; background-color: white; transition: .4s; border-radius: 50%; }
 input:checked + .slider { background-color: #2196F3; }
 input:checked + .slider:before { transform: translateX(20px); }
+</style>

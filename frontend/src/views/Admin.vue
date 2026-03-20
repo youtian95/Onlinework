@@ -70,8 +70,8 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 
 import StudentManager from '../components/admin/StudentManager.vue'
@@ -82,6 +82,7 @@ import SystemSettings from '../components/admin/SystemSettings.vue'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 const router = useRouter()
+const route = useRoute()
 
 // Auth State
 const isAuthenticated = ref(false)
@@ -91,9 +92,16 @@ const adminToken = ref(localStorage.getItem('adminToken') || '')
 
 // Tabs
 const activeTab = ref('students')
+const validTabs = ['students', 'problems', 'ranking', 'export', 'settings']
+
+const resolveTab = (value) => {
+    const normalized = String(value || '').trim()
+    return validTabs.includes(normalized) ? normalized : 'students'
+}
 
 const switchTab = (tab) => {
     activeTab.value = tab
+    router.replace({ path: '/admin', query: { tab } })
 }
 
 // Auth Logic
@@ -122,7 +130,15 @@ onMounted(() => {
     if (adminToken.value) {
         isAuthenticated.value = true
     }
+    activeTab.value = resolveTab(route.query.tab)
 })
+
+watch(
+    () => route.query.tab,
+    (nextTab) => {
+        activeTab.value = resolveTab(nextTab)
+    }
+)
 
 </script>
 
