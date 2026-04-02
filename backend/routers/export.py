@@ -15,7 +15,7 @@ from backend.models import (
     TeamAttempt,
     TeamSubmission,
 )
-from backend.core.config import ARCHIVES_DIR
+from backend.core.config import ARCHIVES_DIR, PUBLIC_DIR
 from backend.core.security import verify_token
 from backend.services.problems import (
     load_problem_script,
@@ -275,7 +275,15 @@ def create_db_dump_bytes(session: Session) -> bytes:
             ])
         zip_file.writestr("team_submissions.csv", ts_out.getvalue().encode("utf-8-sig"))
         
-    zip_buffer.seek(0)
+        # 10. PDF Files
+        submissions_dir = PUBLIC_DIR / "submissions"
+        if submissions_dir.exists():
+            for root, _, files in os.walk(submissions_dir):
+                for file in files:
+                    full_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(full_path, PUBLIC_DIR.parent)
+                    zip_file.write(full_path, arcname=rel_path)
+    
     return zip_buffer.getvalue()
 
 def restore_db_from_bytes(content: bytes, session: Session):
@@ -493,6 +501,16 @@ def restore_db_from_bytes(content: bytes, session: Session):
                             updated_at=parse_dt(row.get('updated_at')) or datetime.now(),
                         )
                         session.add(obj)
+
+            # Restore PDFs
+            for name in names:
+                if name.replace('\\', '/').startswith("public/submissions/"):
+                    # The name is like public/submissions/pdf-test-problem/stu_pdf_test/file.pdf
+                    file_data = zf.read(name)
+                    # Create path inside backend folder
+                    target_path = PUBLIC_DIR.parent / name
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    target_path.write_bytes(file_data)
 
             session.commit()
     except Exception as e:
@@ -867,12 +885,21 @@ def export_work(session: Session = Depends(get_session), token: str = Query(...)
             if a.student_id not in mega_map: mega_map[a.student_id] = {}
             if a.problem_id not in mega_map[a.student_id]: mega_map[a.student_id][a.problem_id] = {}
             mega_map[a.student_id][a.problem_id][a.input_id] = a
-            
+
+        # Load submissions
+        all_prob_subs = session.exec(select(ProblemSubmission)).all()
+        all_team_subs = session.exec(select(TeamSubmission)).all()
+        sub_folder_map = {}
+        for sub in all_prob_subs:
+            sub_folder_map[(sub.student_id, sub.problem_id)] = sub
+        for sub in all_team_subs:
+            sub_folder_map[(sub.student_id, sub.problem_id)] = sub
+
         for s in students:
             s_folder = f"{s.student_id}_{s.name}"
             pdf = MarkdownPdf(toc_level=2)
             student_has_work = False
-            
+
             for pid in problems:
                 script = load_problem_script(pid)
                 if not script: continue
@@ -936,13 +963,22 @@ def export_work(session: Session = Depends(get_session), token: str = Query(...)
                 zip_file.writestr(f"{s_folder}/{pid}.md", final_md)
                 pdf.add_section(Section(final_md, toc=False))
                 student_has_work = True
-            
+
+                # Include uploaded PDF if it exists
+                submission = sub_folder_map.get((s.student_id, pid))
+                if submission and submission.pdf_path:
+                    pdf_full_path = (PUBLIC_DIR / submission.pdf_path).resolve()
+                    if pdf_full_path.exists() and pdf_full_path.is_file():
+                        pdf_name = submission.original_filename or os.path.basename(submission.pdf_path)
+                        zip_file.write(pdf_full_path, arcname=f"{s_folder}/{pid}_附件_{pdf_name}")
+
             if student_has_work:
                 try:
                     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
                         tmp_path = tmp.name
-                    pass 
+
                     pdf.save(tmp_path)
+
                     with open(tmp_path, "rb") as f:
                         pdf_bytes = f.read()
                     zip_file.writestr(f"{s_folder}/{s.student_id}_{s.name}_全作业.pdf", pdf_bytes)
@@ -950,7 +986,7 @@ def export_work(session: Session = Depends(get_session), token: str = Query(...)
                      print(f"PDF Render Error {s.student_id}: {e}")
                      zip_file.writestr(f"{s_folder}/pdf_error.txt", str(e))
                 finally:
-                    if os.path.exists(tmp_path):
+                    if 'tmp_path' in locals() and os.path.exists(tmp_path):
                         try:
                             os.remove(tmp_path)
                         except:

@@ -258,7 +258,7 @@ const hintText = computed(() => {
     return '提示：先认领一个子问题，再在自己负责的区域内按 Enter 提交单个输入框。'
   }
   if (teamworkEnabled.value) {
-    return '提示：只能修改自己认领的区域；队友的结果会同步展示为只读。'
+    return '提示：PDF中写自己负责的子题目的计算过程。'
   }
   return '提示：输入答案后按 Enter 键提交单个输入框。'
 })

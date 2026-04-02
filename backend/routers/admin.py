@@ -7,6 +7,7 @@ from backend.models import (
     Student,
     Attempt,
     ProblemState,
+    ProblemSubmission,
     TeamWorkConfig,
     Team,
     TeamMember,
@@ -616,9 +617,16 @@ def get_teamwork_overview(problem_id: str, session: Session = Depends(get_sessio
 
     student_ids = list({m.student_id for m in members})
     student_name_map = {}
+    submission_map = {}
     if student_ids:
         students = session.exec(select(Student).where(Student.student_id.in_(student_ids))).all()
         student_name_map = {s.student_id: s.name for s in students}
+        
+        submissions = session.exec(select(ProblemSubmission).where(
+            ProblemSubmission.problem_id == problem_id,
+            ProblemSubmission.student_id.in_(student_ids)
+        )).all()
+        submission_map = {s.student_id: s.pdf_path for s in submissions}
 
     claims_map = {}
     for c in claims:
@@ -638,6 +646,7 @@ def get_teamwork_overview(problem_id: str, session: Session = Depends(get_sessio
                 "name": student_name_map.get(m.student_id, ""),
                 "joined_at": m.joined_at,
                 "claimed_subproblem": claims_map.get((t.id, m.student_id)),
+                "pdf_path": submission_map.get(m.student_id)
             })
 
         team_items.append({
@@ -739,6 +748,10 @@ def get_student_progress_data(student_id: str, session: Session = Depends(get_se
     team_attempts = session.exec(select(TeamAttempt).where(TeamAttempt.student_id == student_id)).all()
     team_attempts_map = {(a.problem_id, a.input_id): a for a in team_attempts}
 
+    # 3. 获取该学生的所有PDF提交记录
+    submissions = session.exec(select(ProblemSubmission).where(ProblemSubmission.student_id == student_id)).all()
+    submission_map = {s.problem_id: s.pdf_path for s in submissions}
+
     teamwork_problem_ids = set(
         session.exec(
             select(TeamWorkConfig.problem_id).where(TeamWorkConfig.problem_id.in_(problem_folders))
@@ -786,7 +799,8 @@ def get_student_progress_data(student_id: str, session: Session = Depends(get_se
             'id': problem_id,
             'title': title,
             'teamwork_enabled': is_teamwork_problem,
-            'inputs': problem_inputs
+            'inputs': problem_inputs,
+            'pdf_path': submission_map.get(problem_id)
         })
         
     return problems_data

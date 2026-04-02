@@ -5,6 +5,10 @@ from sqlalchemy import UniqueConstraint
 
 
 class Student(SQLModel, table=True):
+    """
+    表示系统中的学生或用户账户。
+    包含基本身份信息、状态（启用/测试/删除）和登录凭证。
+    """
     id: Optional[int] = Field(default=None, primary_key=True)
     student_id: str = Field(index=True, unique=True)
     name: Optional[str] = None
@@ -15,6 +19,10 @@ class Student(SQLModel, table=True):
 
 
 class Attempt(SQLModel, table=True):
+    """
+    记录学生对特定题目输入的答题记录。
+    跟踪答题次数、正确状态、最后的答案以及更新时间。
+    """
     id: Optional[int] = Field(default=None, primary_key=True)
     student_id: str = Field(index=True)
     problem_id: str = Field(index=True)
@@ -26,6 +34,10 @@ class Attempt(SQLModel, table=True):
 
 
 class ProblemSubmission(SQLModel, table=True):
+    """
+    记录学生上传的作业文件（如PDF）提交记录。
+    保存文件路径和原始文件名等信息。
+    """
     id: Optional[int] = Field(default=None, primary_key=True)
     student_id: str = Field(index=True)
     problem_id: str = Field(index=True)
@@ -35,6 +47,10 @@ class ProblemSubmission(SQLModel, table=True):
 
 
 class ProblemState(SQLModel, table=True):
+    """
+    管理题目的元数据和生命周期状态。
+    包括可见性（是否发布）、截止时间和回收站状态。
+    """
     id: Optional[int] = Field(default=None, primary_key=True)
     problem_id: str = Field(index=True, unique=True)
     
@@ -51,6 +67,10 @@ class ProblemState(SQLModel, table=True):
 
 
 class TeamWorkConfig(SQLModel, table=True):
+    """
+    特定题目的团队合作配置信息。
+    定义了该题目的团队数量、每个团队的最大规模及子题目数量。
+    """
     id: Optional[int] = Field(default=None, primary_key=True)
     problem_id: str = Field(index=True, unique=True)
     team_count: int = Field(default=0, ge=0)
@@ -61,6 +81,10 @@ class TeamWorkConfig(SQLModel, table=True):
 
 
 class Team(SQLModel, table=True):
+    """
+    表示为特定问题创建的一个具体团队。
+    存储团队编号、名称和队伍容纳人数上限。
+    """
     __table_args__ = (
         UniqueConstraint("problem_id", "team_no", name="uq_team_problem_no"),
     )
@@ -74,6 +98,10 @@ class Team(SQLModel, table=True):
 
 
 class TeamMember(SQLModel, table=True):
+    """
+    关联学生与特定题目所在团队的关系记录。
+    确保每个题目每个学生只能加入一个团队。
+    """
     __table_args__ = (
         UniqueConstraint("problem_id", "student_id", name="uq_teammember_problem_student"),
         UniqueConstraint("problem_id", "team_id", "student_id", name="uq_teammember_problem_team_student"),
@@ -87,6 +115,10 @@ class TeamMember(SQLModel, table=True):
 
 
 class TeamSubproblemClaim(SQLModel, table=True):
+    """
+    记录团队协作题目中被学生认领的子题目状态。
+    约束每个同学只能认领一个子题，且每个子题只能被一位同学认领。
+    """
     __table_args__ = (
         UniqueConstraint("problem_id", "team_id", "student_id", name="uq_claim_problem_team_student"),
         UniqueConstraint("problem_id", "team_id", "subproblem_no", name="uq_claim_problem_team_subproblem"),

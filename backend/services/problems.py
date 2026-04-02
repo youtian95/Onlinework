@@ -22,6 +22,7 @@ from backend.models import (
     TeamMember,
     TeamSubproblemClaim,
     TeamAttempt,
+    ProblemSubmission,
 )
 
 # 获取后端目录的绝对路径
@@ -446,6 +447,13 @@ def get_problem_ranking(session: Session, problem_id: str):
     )).all()
     student_map = {s.student_id: s.name for s in students}
 
+    # Fetch submissions
+    submissions = session.exec(select(ProblemSubmission).where(
+        ProblemSubmission.problem_id == problem_id,
+        ProblemSubmission.student_id.in_(student_ids)
+    )).all()
+    submission_map = {s.student_id: s.pdf_path for s in submissions}
+
     ranking_list = []
     for sid, stats in student_stats.items():
         if sid not in student_map:
@@ -454,7 +462,8 @@ def get_problem_ranking(session: Session, problem_id: str):
             "student_id": sid,
             "name": student_map.get(sid, "-"),
             "score": stats["score"],
-            "last_update": stats["last_update"]
+            "last_update": stats["last_update"],
+            "pdf_path": submission_map.get(sid)
         })
         
     def sort_key(item):
@@ -594,6 +603,11 @@ def get_teamwork_personal_ranking(session: Session, problem_id: str):
         stats[sid]["score"] += input_scores.get(a.input_id, DEFAULT_INPUT_SCORE)
 
     ranking_list = []
+    submissions = session.exec(select(ProblemSubmission).where(
+        ProblemSubmission.problem_id == problem_id
+    )).all()
+    submission_map = {s.student_id: s.pdf_path for s in submissions}
+
     for sid in valid_student_ids:
         member = member_by_student.get(sid)
         if not member:
@@ -615,6 +629,7 @@ def get_teamwork_personal_ranking(session: Session, problem_id: str):
             "total_possible": total_possible,
             "score_rate": score_rate,
             "last_update": stats[sid]["last_update"],
+            "pdf_path": submission_map.get(sid)
         })
 
     def sort_key(item):
@@ -735,7 +750,6 @@ def get_total_ranking(session: Session):
 
     problem_scores = {} # { (problem_id, input_id): score }
     visible_problem_ids = set()
-    total_possible_score = 0
     if os.path.exists(PROBLEMS_DIR):
         for name in os.listdir(PROBLEMS_DIR):
             # 过滤掉回收站或未发布的题目
@@ -760,14 +774,47 @@ def get_total_ranking(session: Session):
                     config = meta_inputs.get(input_id, {})
                     score = config.get("score", DEFAULT_INPUT_SCORE)
                     problem_scores[(name, input_id)] = score
-                    total_possible_score += score
 
+    # 区分普通题和团队题，团队题需要特殊处理分母和得分统计
+    non_team_problem_ids = set(visible_problem_ids) # 普通题
     teamwork_problem_ids = set()
+    teamwork_configs = {} # { problem_id: TeamWorkConfig }
     if visible_problem_ids:
         team_problem_rows = session.exec(
-            select(TeamWorkConfig.problem_id).where(TeamWorkConfig.problem_id.in_(list(visible_problem_ids)))
+            select(TeamWorkConfig).where(TeamWorkConfig.problem_id.in_(list(visible_problem_ids)))
         ).all()
-        teamwork_problem_ids = set(team_problem_rows)
+        teamwork_problem_ids = {row.problem_id for row in team_problem_rows}
+        teamwork_configs = {row.problem_id: row for row in team_problem_rows}
+        non_team_problem_ids = visible_problem_ids - teamwork_problem_ids
+
+    # 总分母分为普通题基础分，和每个学生不同团队题认领分
+    base_total_possible = sum(
+        score
+        for (pid, _), score in problem_scores.items()
+        if pid in non_team_problem_ids
+    )
+
+    # 团队题计分时仍按认领子题过滤，需要构建 input -> 子题映射
+    teamwork_input_sub_map = {} # { problem_id: { input_id: subproblem_no } }
+    for problem_id in teamwork_problem_ids:
+        script = load_problem_script(problem_id)
+        if not script:
+            teamwork_input_sub_map[problem_id] = {}
+            continue
+
+        rng = get_stable_rng(f"public_{problem_id}")
+        try:
+            params = script.generate(rng) if hasattr(script, "generate") else {}
+        except Exception:
+            params = {}
+
+        config = teamwork_configs.get(problem_id)
+        if not config:
+            teamwork_input_sub_map[problem_id] = {}
+            continue
+
+        input_sub_map = _build_input_subproblem_map(problem_id, params, config.subproblem_count)
+        teamwork_input_sub_map[problem_id] = input_sub_map
 
     # 3. 获取所有启用的学生 (排除测试账号和已删除账号)
     students = session.exec(select(Student).where(Student.enabled == True, Student.is_test == False, Student.is_deleted == False)).all()
@@ -778,19 +825,42 @@ def get_total_ranking(session: Session):
         student_map[s.student_id] = s.name
         student_stats[s.student_id] = {
             "score": 0,
-            "last_update": None 
+            "last_update": None,
+            "total_possible": base_total_possible,
         }
+
+    # 团队题分母按认领限制；同时用于团队题得分过滤时读取认领关系
+    if teamwork_problem_ids and student_stats:
+        claims = session.exec(
+            select(TeamSubproblemClaim).where(
+                TeamSubproblemClaim.problem_id.in_(list(teamwork_problem_ids)),
+                TeamSubproblemClaim.student_id.in_(list(student_stats.keys())),
+            )
+        ).all()
+        claim_map = {
+            (claim.problem_id, claim.student_id): claim.subproblem_no
+            for claim in claims
+        }
+        # 为每个认领了题目的学生增加对应的总分母
+        for claim in claims:
+            input_sub_map = teamwork_input_sub_map.get(claim.problem_id, {})
+            # 此学生在此题目中认领的子题号是 claim.subproblem_no
+            # 找到对应此子题号的所有输入框，并累加分数
+            for input_id, sub_no in input_sub_map.items():
+                if sub_no == claim.subproblem_no:
+                    score = problem_scores.get((claim.problem_id, input_id), 0)
+                    student_stats[claim.student_id]["total_possible"] += score
+    else:
+        claim_map = {}
 
     # 4. 获取并统计普通题提交记录
     attempts = []
-    if visible_problem_ids:
+    if non_team_problem_ids:
         attempts = session.exec(
-            select(Attempt).where(Attempt.problem_id.in_(list(visible_problem_ids)))
+            select(Attempt).where(Attempt.problem_id.in_(list(non_team_problem_ids)))
         ).all()
 
     for a in attempts:
-        if a.problem_id in teamwork_problem_ids:
-            continue
         if a.student_id in student_stats:
             stats = student_stats[a.student_id]
             current_update = _ensure_utc_datetime(a.updated_at)
@@ -815,6 +885,12 @@ def get_total_ranking(session: Session):
             if current_update is not None and (stats["last_update"] is None or current_update > stats["last_update"]):
                 stats["last_update"] = current_update
             if a.correct:
+                claimed_sub = claim_map.get((a.problem_id, a.student_id))
+                if claimed_sub is None:
+                    continue
+                input_sub_map = teamwork_input_sub_map.get(a.problem_id, {})
+                if input_sub_map.get(a.input_id) != claimed_sub:
+                    continue
                 if (a.problem_id, a.input_id) in problem_scores:
                     score = problem_scores[(a.problem_id, a.input_id)]
                     stats["score"] += score
@@ -824,24 +900,26 @@ def get_total_ranking(session: Session):
     for sid, stats in student_stats.items():
         score = stats["score"]
         rate = 0
-        if total_possible_score > 0:
-            rate = round((score / total_possible_score) * 100, 1)
+        total_possible = stats["total_possible"]
+        if total_possible > 0:
+            rate = round((score / total_possible) * 100, 1)
             
         ranking_list.append({
             "student_id": sid,
             "name": student_map.get(sid, "-"),
             "score": score,
             "score_rate": rate,
-            "total_possible": total_possible_score,
+            "total_possible": total_possible,
             "last_update": stats["last_update"]
         })
         
     def sort_key(item):
+        rate = item["score_rate"]
         score = item["score"]
         dt = _ensure_utc_datetime(item["last_update"])
         if dt is None:
             dt = datetime.max.replace(tzinfo=timezone.utc)
-        return (-score, dt)
+        return (-rate, -score, dt)
         
     ranking_list.sort(key=sort_key)
     

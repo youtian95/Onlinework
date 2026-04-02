@@ -227,10 +227,16 @@
                 <div v-else class="progress-list">
                     <div v-for="p in progressData" :key="p.id" class="progress-item">
                         <div class="prob-header">
-                            <span class="prob-title">{{ p.title }}</span>
-                            <span class="prob-id">{{ p.id }}</span>
-                        </div>
-                        
+                              <div class="prob-info">
+                                  <span class="prob-title">{{ p.title }}</span>
+                                  <span class="prob-id">{{ p.id }}</span>
+                              </div>
+                              <div class="prob-pdf-status">
+                                  <a v-if="p.pdf_path" :href="`${API_BASE_URL.replace('/api', '')}/public/${p.pdf_path}`" target="_blank" class="pdf-download-link">📥 下载PDF</a>
+                                  <span v-else class="pdf-not-uploaded">未上传PDF</span>
+                              </div>
+                          </div>
+
                         <div class="input-table-wrapper">
                             <table class="input-table">
                                 <thead>
@@ -892,8 +898,14 @@ th {
     margin-bottom: 8px;
     display: flex;
     justify-content: space-between;
+    align-items: center;
     font-weight: 600;
 }
+.prob-info { display: flex; align-items: center; gap: 10px; }
+.prob-pdf-status { font-size: 13px; font-weight: normal; }
+.pdf-download-link { color: #409eff; text-decoration: none; }
+.pdf-download-link:hover { text-decoration: underline; }
+.pdf-not-uploaded { color: #909399; }
 .progress-list { display: flex; flex-direction: column; gap: 15px; }
 .input-table { width: 100%; border: 1px solid #ebeef5; }
 .input-table th { background: #fff; }

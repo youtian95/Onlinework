@@ -16,8 +16,8 @@ services:
 
   frontend:
     build:
-      context: frontend  # 构建上下文是 frontend 目录
-      dockerfile: Dockerfile
+      context: .  # 更改上下文为根目录以包含 docs
+      dockerfile: frontend/Dockerfile
     restart: always
     ports:
       - "5050:80"  # 改为映射到宿主机 5050，避免和 1Panel 的 80 端口冲突

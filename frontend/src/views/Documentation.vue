@@ -31,7 +31,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { marked } from 'marked'
-import rawDocContent from '../docs/guide.md?raw'
+import rawDocContent from '../../../docs/guide.md?raw'
 import 'github-markdown-css/github-markdown-light.css'
 
 const router = useRouter()

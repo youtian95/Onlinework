@@ -50,21 +50,29 @@ SUBMISSIONS_DIR = PUBLIC_DIR / "submissions"
 
 
 def _safe_name(value: str) -> str:
-    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "")).strip("._-")
+    # \w 包含了字母、数字、下划线以及所有的 Unicode 单词字符（如汉字）
+    cleaned = re.sub(r"[^\w\s.-]", "_", str(value or "")).strip(" ._-")
     return cleaned or "unknown"
 
 
-def _save_submission_pdf(student_id: str, problem_id: str, pdf_file: UploadFile):
+def _save_submission_pdf(student: Student, problem_id: str, pdf_file: UploadFile):
+    pdf_file.file.seek(0, 2)
+    file_size = pdf_file.file.tell()
+    pdf_file.file.seek(0)
+    if file_size > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="请上传不超过10MB的PDF文件")
+
     filename = pdf_file.filename or "submission.pdf"
     ext = Path(filename).suffix.lower()
     content_type = (pdf_file.content_type or "").lower()
     if ext != ".pdf" and content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
-    target_dir = SUBMISSIONS_DIR / _safe_name(problem_id) / _safe_name(student_id)
+    target_dir = SUBMISSIONS_DIR / _safe_name(problem_id) / _safe_name(student.student_id)
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    saved_name = f"{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex}.pdf"
+    safe_name_str = _safe_name(student.name) if getattr(student, "name", None) else "unknown"
+    saved_name = f"{student.student_id}_{safe_name_str}.pdf"
     full_path = target_dir / saved_name
 
     pdf_file.file.seek(0)
@@ -72,7 +80,7 @@ def _save_submission_pdf(student_id: str, problem_id: str, pdf_file: UploadFile)
         shutil.copyfileobj(pdf_file.file, f)
 
     rel_path = full_path.relative_to(PUBLIC_DIR).as_posix()
-    return rel_path, filename
+    return rel_path, saved_name
 
 
 def _upsert_submission_record(
@@ -1047,13 +1055,13 @@ async def upload_problem_pdf(
             raise HTTPException(status_code=403, detail="Team selection required")
 
     try:
-        saved_pdf_path, original_filename = _save_submission_pdf(current_student.student_id, problem_id, pdf)
+        saved_pdf_path, display_filename = _save_submission_pdf(current_student, problem_id, pdf)
         _upsert_submission_record(
             session,
             current_student.student_id,
             problem_id,
             saved_pdf_path,
-            original_filename,
+            display_filename,
         )
         session.commit()
     finally:
@@ -1062,7 +1070,7 @@ async def upload_problem_pdf(
     return {
         "message": "PDF uploaded",
         "pdf_uploaded": True,
-        "pdf_filename": original_filename,
+        "pdf_filename": display_filename,
     }
 
 

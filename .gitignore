@@ -33,6 +33,8 @@ backend/public/cover*
 backend/public/submissions/
 backend/archive/*.zip
 
+archives/
+
 # Problems: ignore all except demo folders
 backend/problems/**
 !backend/problems/demo*/

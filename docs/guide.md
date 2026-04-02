@@ -153,6 +153,14 @@
 
 - 打开浏览器，访问 `http://localhost:5173`。
 
+### 本地测试docker部署
+
+```bash
+docker compose up -d --build
+```
+
+访问 `http://localhost:5050`。
+
 ### 服务器部署
 
 #### 1. 获取代码
@@ -212,6 +220,9 @@ cd onlinework
 当你有新代码提交到 GitHub 后，在服务器上更新：
 
 ```bash
+# 停止当前运行的容器
+docker compose down
+
 # `docker-compose.yml`文件如果修改过端口，这里需要先暂存修改
 git stash
 
@@ -223,7 +234,6 @@ git stash pop
 
 
 # 2. 重新构建并重启（命令行方式）
-docker compose down
 docker compose up -d --build
 
 # 2. 重新构建并重启 (1Panel方式)

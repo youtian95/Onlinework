@@ -88,9 +88,13 @@
               <span class="member-name">{{ member.name || member.student_id }}</span>
               <span class="member-id">{{ member.student_id }}</span>
             </div>
-            <span class="claim-chip">
-              {{ member.claimed_subproblem ? `认领子题 ${member.claimed_subproblem}` : '未认领' }}
-            </span>
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+              <span class="claim-chip">
+                {{ member.claimed_subproblem ? `认领子题 ${member.claimed_subproblem}` : '未认领' }}
+              </span>
+              <a v-if="member.pdf_path" :href="`${API_BASE_URL.replace('/api', '')}/public/${member.pdf_path}`" target="_blank" class="download-link" style="font-size: 11px;">📥 PDF</a>
+              <span v-else class="empty-data" style="font-size: 11px;">无PDF</span>
+            </div>
           </li>
         </ul>
         <div v-else class="empty-members">暂无成员</div>
@@ -129,6 +133,7 @@
               <th>学号</th>
               <th>姓名</th>
               <th>得分</th>
+              <th>PDF文件</th>
               <th>最后更新</th>
             </tr>
           </thead>
@@ -142,6 +147,10 @@
               <td>{{ row.student_id }}</td>
               <td>{{ row.name || '-' }}</td>
               <td>{{ row.score }}</td>
+              <td>
+                <a v-if="row.pdf_path" :href="`${API_BASE_URL.replace('/api', '')}/public/${row.pdf_path}`" target="_blank" class="download-link">📥 下载</a>
+                <span v-else class="empty-data">未上传</span>
+              </td>
               <td>{{ formatTime(row.last_update) }}</td>
             </tr>
           </tbody>
@@ -153,6 +162,8 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 const props = defineProps({
   teamworkEnabled: {
