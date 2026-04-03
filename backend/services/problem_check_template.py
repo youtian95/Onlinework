@@ -9,7 +9,7 @@ class NumericCheckTemplate:
     - Any parse/calculation error in that method is caught and that input is marked False
     """
 
-    def __init__(self, params: Dict[str, Any], user_answers: Dict[str, Any], default_tol: float = 5e-2):
+    def __init__(self, params: Dict[str, Any], user_answers: Dict[str, Any], default_tol: float = 2e-2):
         self.params = params or {}
         self.user_answers = user_answers or {}
         self.default_tol = default_tol

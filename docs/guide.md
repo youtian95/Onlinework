@@ -44,73 +44,76 @@
   
 #### 出题说明
 
-1. **题目内容编写（problem.md）**：
+##### 题目内容编写（problem.md）
 
-    - 使用 Markdown 语法编写题目内容。
-    - **LaTeX 公式编写注意**：公式块 `$ ... $` 的起始 `$` 后面和结束 `$` 前面通常需要保留空格，否则无法正确渲染。同时，请勿将 `{{ input(...) }}` 放在公式块 `$ ... $` 内部，应将其放在公式外部。
-    - 使用 `{{ input('ans_1') }}` 定义填空项，`ans_1` 是该填空的唯一 ID。
-    - 可以使用 `{{ a }}`, `{{ b }}` 等变量表示题目参数，这些参数将在脚本中生成。
-    - 示例：
+- 使用 Markdown 语法编写题目内容。
+- **LaTeX 公式编写注意**：公式块 `$ ... $` 的起始 `$` 后面和结束 `$` 前面通常需要保留空格，否则无法正确渲染。同时，请勿将 `{{ input(...) }}` 放在公式块 `$ ... $` 内部，应将其放在公式外部。
+- 使用 `{{ input('ans_1') }}` 定义填空项，`ans_1` 是该填空的唯一 ID。
+- 可以使用 `{{ a }}`, `{{ b }}` 等变量表示题目参数，这些参数将在脚本中生成。
+- 示例：
 
-        ```markdown
-        # 基础加法
+   ```markdown
+   # 基础加法
 
-        (1) 请计算下式的结果： $ {{ a }} + {{ b }} = $ {{ input("ans_1") }} 
+   (1) 请计算下式的结果： $ {{ a }} + {{ b }} = $ {{ input("ans_1") }} 
 
-        (2) 请计算下式的结果： $ {{ a }} - {{ b }} = $ {{ input("ans_2") }}
-        ```
+   (2) 请计算下式的结果： $ {{ a }} - {{ b }} = $ {{ input("ans_2") }}
+   ```
 
-2. **题目批改逻辑编写（script.py）**：
-    - Python 脚本包含三个部分：`meta`（元数据）、`generate`（参数生成）、`Checker 类`（答案校验）。
-    - **`meta` 变量（必填，`inputs` 可省略）**：定义题目名称和每个填空的配置（最大尝试次数、分值）。
-        - 若 `inputs` 未填写，系统默认使用空对象 `{}`。
-        - 单个填空未配置 `max_attempts` 时默认 3 次；未配置 `score` 时默认 1 分。
-    - **`generate` 函数（必填）**：
-        - 接收 `rng`（一个基于学号固定的随机数生成器）。
-        - 使用 `rng.randint(min, max)` 等方法生成随机数。
-        - 返回一个字典，包含 `problem.md` 中需要的变量（如 `a`, `b`）。
-    - **`Checker 类`（必填，必须继承 `NumericCheckTemplate`）**：
-        - 必须为每个输入框写一个“同名函数”。
-        - 例如 `<input id="ans_1" />` 对应 `def ans_1(self): ...`。
-        - 每个函数返回 `True` 或 `False`。
-        - 系统会自动执行这些同名函数（除了以 `_` 开头的函数都会被执行），并汇总成每个输入 ID 对应的 `True/False` 字典。
-    - 示例代码：
+##### 题目批改逻辑编写（script.py）
 
-    ```python
-    from backend.services.problem_check_template import NumericCheckTemplate
+Python 脚本包含三个部分：`meta`（元数据）、`generate`（参数生成）、`Checker 类`（答案校验）。
 
-    meta = {
-        "title": "整数加法练习",
-        "inputs": {
-            "ans_1": {"max_attempts": 3}, # 定义 ans_1 最多尝试3次
-        }
-    }
+- **`meta` 变量（必填，`inputs` 可省略）**：定义题目名称和每个填空的配置（最大尝试次数、分值）。
+  - 若 `inputs` 未填写，系统默认使用空对象 `{}`。
+  - 单个填空未配置 `max_attempts` 时默认 3 次；未配置 `score` 时默认 1 分。
+- **`generate` 函数（必填）**：
+  - 接收 `rng`（一个基于学号固定的随机数生成器）。
+  - 使用 `rng.randint(min, max)` 等方法生成随机数。
+  - 返回一个字典，包含 `problem.md` 中需要的变量（如 `a`, `b`）。
+- **`Checker 类`（必填，必须继承 `NumericCheckTemplate`）**：
+  - 必须为每个输入框写一个“同名函数”。
+  - 例如 `<input id="ans_1" />` 对应 `def ans_1(self): ...`。
+  - 每个函数返回 `True` 或 `False`。
+  - 系统会自动执行这些同名函数（除了以 `_` 开头的函数都会被执行），并汇总成每个输入 ID 对应的 `True/False` 字典。如果某一步因为空值、格式错误、除零等原因抛出异常，系统会自动把这个输入框判为 `False`。
 
-    def generate(rng):
-        # 必须使用传入的 rng 生成随机数，确保同一学号每次看到的数据一致
-        return {
-            "a": rng.randint(10, 99),
-            "b": rng.randint(10, 99)
-        }
+示例代码：
 
-    class AddChecker(NumericCheckTemplate):
-        def ans_1(self):
-            correct_ans = self.params["a"] + self.params["b"]
-            return self.is_int_equal("ans_1", correct_ans)
-    ```
+  ```python
+  from backend.services.problem_check_template import NumericCheckTemplate
 
-    - 这是唯一支持的写法：
-        - 例如 `<input id="ans_1" />` 对应 `def ans_1(self): ...`。
-        - 函数返回 `True` 或 `False` 即可。
-        - 函数内部可以直接写普通 Python 计算，例如 `+ - * / **`。
-        - 如果某一步因为空值、格式错误、除零等原因抛出异常，系统会自动把这个输入框判为 `False`。
-    - 常用方法：
-        - `self.parse_float(key)`：读取并解析浮点数，解析失败直接抛异常。
-        - `self.parse_int(key)`：读取并解析整数，解析失败直接抛异常。
-        - `self.text(key)`：读取文本，空值或空字符串会抛异常。
-        - `self.is_close(key, expected, tol=1e-2)`：按浮点容差返回 `True/False`。
-        - `self.is_int_equal(key, expected)`：按整数相等返回 `True/False`。
-        - `self.is_int_range(key, low, high)`：按整数范围返回 `True/False`。
+  meta = {
+      "title": "整数加法练习",
+      "inputs": {
+          "ans_1": {"max_attempts": 3}, # 定义 ans_1 最多尝试3次
+      }
+  }
+
+  def generate(rng):
+      # 必须使用传入的 rng 生成随机数，确保同一学号每次看到的数据一致
+      return {
+          "a": rng.randint(10, 99),
+          "b": rng.randint(10, 99)
+      }
+
+  class AddChecker(NumericCheckTemplate):
+      def ans_1(self):
+          correct_ans = self.params["a"] + self.params["b"]
+          return self.is_int_equal("ans_1", correct_ans)
+  ```
+
+获取参数值方法：
+
+- `self.params["a"]`：获取 `generate` 函数返回的参数值。
+
+获取输入值方法：
+
+- `self.parse_float(key)`：读取并解析浮点数，解析失败直接抛异常。
+- `self.parse_int(key)`：读取并解析整数，解析失败直接抛异常。
+- `self.text(key)`：读取文本，空值或空字符串会抛异常。
+- `self.is_close(key, expected, tol=1e-2)`：按浮点容差返回 `True/False`。
+- `self.is_int_equal(key, expected)`：按整数相等返回 `True/False`。
+- `self.is_int_range(key, low, high)`：按整数范围返回 `True/False`。
 
 #### 出题测试
 

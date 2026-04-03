@@ -12,3 +12,5 @@ markdown-pdf
 pyjwt
 beautifulsoup4
 reportlab
+pandas
+openpyxl

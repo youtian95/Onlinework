@@ -12,12 +12,25 @@ class BoltStrengthIndex:
     """螺栓强度指标查表结果，统一承载各类强度设计值。"""
 
     source_group: str
+    """数据来源分组标识"""
+    
     grade: str
+    """螺栓性能等级或钢材牌号 (例如 '4.6', '8.8', 'Q235')"""
+    
     ft_mpa: Optional[float] = None
+    """螺栓抗拉强度设计值 ft (MPa)"""
+    
     fv_mpa: Optional[float] = None
+    """螺栓抗剪强度设计值 fvb (MPa)"""
+    
     fc_mpa: Optional[float] = None
+    """承压强度设计值 fcb (MPa)"""
+    
     fub_mpa: Optional[float] = None
+    """螺栓最小抗拉强度 fub (MPa)"""
+    
     standard: str = "GB50017-2017"
+    """查询所依据的规范标准"""
 
 
 # 按性能等级给出的抗拉强度后备值。

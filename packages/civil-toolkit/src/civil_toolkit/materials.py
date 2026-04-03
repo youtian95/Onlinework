@@ -6,13 +6,28 @@ class SteelStrength:
     """钢材强度查表结果，包含抗拉抗剪承压与屈服抗拉指标。"""
 
     grade: str
+    """钢材牌号 (例如: 'Q235', 'Q355')"""
+    
     thickness_mm: float
+    """计算所用的钢材厚度分界值 (mm)"""
+    
     f_mpa: float
+    """抗拉、抗压和抗弯强度设计值 f (MPa)"""
+    
     fv_mpa: float
+    """抗剪强度设计值 fv (MPa)"""
+    
     fce_mpa: float
+    """端面承压强度设计值 fce (MPa)"""
+    
     fy_mpa: float
+    """钢材的屈服强度 fy (MPa)"""
+    
     fu_mpa: float
+    """钢材的抗拉强度最小值 fu (MPa)"""
+    
     standard: str
+    """查询所依据的规范标准 (默认: 'GB50017-2017')"""
 
 
 # Data source: user-provided structural steel strength table image.
@@ -55,6 +70,11 @@ def _normalize_grade(grade: str) -> str:
     """将钢材牌号标准化为去空格后的大写字符串。"""
     return str(grade or "").strip().upper()
 
+def get_supported_steel_grades(standard: str = "GB50017-2017") -> list[str]:
+    """返回指定标准支持的钢材牌号列表。"""
+    if standard != "GB50017-2017":
+        raise ValueError(f"Unsupported standard: {standard}")
+    return sorted(_STEEL_TABLE_GB50017_2017.keys())
 
 def get_steel_strength(grade: str, thickness_mm: float, standard: str = "GB50017-2017") -> SteelStrength:
     """按钢材牌号与厚度查强度设计值并返回统一结果对象。"""

@@ -15,140 +15,158 @@ from .bolt_strengths import (
 
 @dataclass(frozen=True)
 class BoltTensionCapacity:
-    """普通螺栓单栓抗拉承载力结果。
-
-    参数说明：
-    - diameter_mm：螺栓公称直径，单位为毫米。
-    - grade：螺栓性能等级，例如 4.6、4.8、5.6、8.8。
-    - bolt_class：普通螺栓类别，通常为 C 或 AB。
-    - ft_mpa：普通螺栓抗拉强度设计值，单位为 MPa。
-    - effective_area_mm2：螺栓有效截面积，单位为平方毫米。
-    - design_kn：单栓抗拉承载力设计值，单位为 kN。
-    - standard：采用的规范或数据来源标识。
-    """
+    """普通螺栓单栓抗拉承载力结果。"""
 
     diameter_mm: int
+    """螺栓公称直径 (mm)"""
+    
     grade: str
+    """螺栓性能等级，例如 4.6、4.8、5.6、8.8"""
+    
     bolt_class: str
+    """普通螺栓类别，通常为 C 或 AB"""
+    
     ft_mpa: float
+    """普通螺栓抗拉强度设计值 (MPa)"""
+    
     effective_area_mm2: float
+    """螺栓有效截面积 (mm2)"""
+    
     design_kn: float
+    """单栓抗拉承载力设计值 (kN)"""
+    
     standard: str
+    """采用的规范或数据来源标识"""
 
 
 @dataclass(frozen=True)
 class BoltShearCapacity:
-    """普通螺栓单栓抗剪承载力结果。
-
-    参数说明：
-    - diameter_mm：螺栓公称直径，单位为毫米。
-    - grade：螺栓性能等级，例如 4.6、4.8、5.6、8.8。
-    - bolt_class：普通螺栓类别，通常为 C 或 AB。
-    - shear_planes：受剪面数量，即公式中的 n_v。
-    - fv_mpa：普通螺栓抗剪强度设计值，单位为 MPa。
-    - gross_area_mm2：按螺栓公称直径计算得到的毛截面积，单位为平方毫米。
-    - shear_failure_kn：按抗剪破坏计算得到的承载力设计值，单位为 kN。
-    - fc_mpa：连接板承压强度设计值，单位为 MPa。
-    - total_bearing_thickness_mm：承压计算中各受压板件厚度之和，单位为毫米。
-    - bearing_failure_kn：按承压破坏计算得到的承载力设计值，单位为 kN。
-    - design_kn：最终单栓抗剪承载力设计值，取抗剪破坏和承压破坏中的较小值，单位为 kN。
-    - standard：采用的规范或数据来源标识。
-    """
+    """普通螺栓单栓抗剪承载力结果。"""
 
     diameter_mm: int
+    """螺栓公称直径 (mm)"""
+    
     grade: str
+    """螺栓性能等级，例如 4.6、4.8、5.6、8.8"""
+    
     bolt_class: str
+    """普通螺栓类别，通常为 C 或 AB"""
+    
     shear_planes: int
+    """受剪面数量，即公式中的 n_v"""
+    
     fv_mpa: float
+    """普通螺栓抗剪强度设计值 (MPa)"""
+    
     gross_area_mm2: float
+    """按螺栓公称直径计算得到的毛截面积 (mm2)"""
+    
     shear_failure_kn: float
+    """按抗剪破坏计算得到的承载力设计值 (kN)"""
+    
     fc_mpa: float
+    """连接板承压强度设计值 (MPa)"""
+    
     total_bearing_thickness_mm: float
+    """承压计算中各受压板件厚度之和 (mm)"""
+    
     bearing_failure_kn: float
+    """按承压破坏计算得到的承载力设计值 (kN)"""
+    
     design_kn: float
+    """最终单栓抗剪承载力设计值，取抗剪破坏和承压破坏中的较小值 (kN)"""
+    
     standard: str
+    """采用的规范或数据来源标识"""
 
 
 @dataclass(frozen=True)
 class BoltEffectiveSection:
-    """螺栓有效截面参数。
-
-    参数说明：
-    - diameter_mm：螺栓公称直径，单位为毫米。
-    - pitch_mm：螺距，单位为毫米。
-    - effective_diameter_mm：螺栓有效直径，单位为毫米。
-    - effective_area_mm2：螺栓有效截面积，单位为平方毫米。
-    """
+    """螺栓有效截面参数。"""
 
     diameter_mm: int
+    """螺栓公称直径 (mm)"""
+    
     pitch_mm: float
+    """螺距 (mm)"""
+    
     effective_diameter_mm: float
+    """螺栓有效直径 (mm)"""
+    
     effective_area_mm2: float
+    """螺栓有效截面积 (mm2)"""
 
 
 @dataclass(frozen=True)
 class HighStrengthBoltTensionCapacity:
-    """高强螺栓单栓抗拉承载力结果。
-
-    参数说明：
-    - diameter_mm：螺栓公称直径，单位为毫米。
-    - grade：高强螺栓性能等级，例如 8.8、10.9。
-    - preload_kn：高强螺栓预紧力 P，单位为 kN。
-    - design_kn：单栓抗拉承载力设计值，按 0.8P 计算，单位为 kN。
-    - standard：采用的规范或数据来源标识。
-    """
+    """高强螺栓单栓抗拉承载力结果。"""
 
     diameter_mm: int
+    """螺栓公称直径 (mm)"""
+    
     grade: str
+    """高强螺栓性能等级，例如 8.8、10.9"""
+    
     preload_kn: float
+    """高强螺栓预紧力 P (kN)"""
+    
     design_kn: float
+    """单栓抗拉承载力设计值，按 0.8P 计算 (kN)"""
+    
     standard: str
+    """采用的规范或数据来源标识"""
 
 
 @dataclass(frozen=True)
 class HighStrengthFrictionShearCapacity:
-    """高强螺栓摩擦型单栓抗剪承载力结果。
-
-    参数说明：
-    - diameter_mm：螺栓公称直径，单位为毫米。
-    - grade：高强螺栓性能等级，例如 8.8、10.9。
-    - preload_kn：高强螺栓预紧力 P，单位为 kN。
-    - friction_coefficient：摩擦面抗滑移系数 mu。
-    - slip_surface_count：摩擦面数量 n_f。
-    - design_kn：单栓抗剪承载力设计值，按 0.9*n_f*mu*P 计算，单位为 kN。
-    - standard：采用的规范或数据来源标识。
-    """
+    """高强螺栓摩擦型单栓抗剪承载力结果。"""
 
     diameter_mm: int
+    """螺栓公称直径 (mm)"""
+    
     grade: str
+    """高强螺栓性能等级，例如 8.8、10.9"""
+    
     preload_kn: float
+    """高强螺栓预紧力 P (kN)"""
+    
     friction_coefficient: float
+    """摩擦面抗滑移系数 mu"""
+    
     slip_surface_count: int
+    """摩擦面数量 n_f"""
+    
     design_kn: float
+    """单栓抗剪承载力设计值，按 0.9*n_f*mu*P 计算 (kN)"""
+    
     standard: str
+    """采用的规范或数据来源标识"""
 
 
 @dataclass(frozen=True)
 class HighStrengthFrictionCombinedCheck:
-    """高强螺栓摩擦型连接拉剪共同作用校核结果。
-
-    参数说明：
-    - shear_demand_kn：单栓剪力设计值 Nv，单位为 kN。
-    - tension_demand_kn：单栓拉力设计值 Nt，单位为 kN。
-    - shear_capacity_kn：摩擦型单栓抗剪承载力 N_v^b，单位为 kN。
-    - tension_capacity_kn：单栓抗拉承载力 N_t^b，单位为 kN。
-    - interaction_ratio：线性相关比值 Nv/N_v^b + Nt/N_t^b。
-    - is_ok：是否满足线性相关验算要求（ratio <= 1）。
-    - standard：采用的规范或数据来源标识。
-    """
+    """高强螺栓摩擦型连接拉剪共同作用校核结果。"""
 
     shear_demand_kn: float
+    """单栓剪力设计值 Nv (kN)"""
+    
     tension_demand_kn: float
+    """单栓拉力设计值 Nt (kN)"""
+    
     shear_capacity_kn: float
+    """摩擦型单栓抗剪承载力 N_v^b (kN)"""
+    
     tension_capacity_kn: float
+    """单栓抗拉承载力 N_t^b (kN)"""
+    
     interaction_ratio: float
+    """线性相关比值 Nv/N_v^b + Nt/N_t^b"""
+    
     is_ok: bool
+    """是否满足线性相关验算要求 (ratio <= 1)"""
+    
     standard: str
+    """采用的规范或数据来源标识"""
 
 
 @dataclass(frozen=True)
