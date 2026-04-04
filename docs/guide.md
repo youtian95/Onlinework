@@ -115,10 +115,6 @@ Python 脚本包含三个部分：`meta`（元数据）、`generate`（参数生
 - `self.is_int_equal(key, expected)`：按整数相等返回 `True/False`。
 - `self.is_int_range(key, low, high)`：按整数范围返回 `True/False`。
 
-#### 出题测试
-
-目前只能通过创建一个测试学生账号来测试题目。
-
 ## 开发者文档
 
 ### 本地调试项目

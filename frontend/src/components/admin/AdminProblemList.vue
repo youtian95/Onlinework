@@ -162,8 +162,11 @@ const updateProblemState = async (problem, updates) => {
         // because response id is database int id, and title might be null
 
     } catch (e) {
-        if(e.response && e.response.status === 401) emit('logout')
-        else alert('操作失败')
+        if(e.response && e.response.status === 401) {
+            emit('logout')
+        } else {
+            alert(e?.response?.data?.detail || '操作失败')
+        }
     }
 }
 

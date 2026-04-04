@@ -38,7 +38,7 @@
                                 <span v-if="problem.is_terminated" class="badge-terminated">已截止</span>
                             </span>
                             <div class="problem-meta">
-                                <span class="problem-score" v-if="problem.total_score !== undefined">
+                                <span class="problem-score" v-if="studentId && problem.total_score !== undefined">
                                     得分: {{ problem.obtained_score }} / {{ problem.total_score }}
                                 </span>
                                 <span v-if="problem.teamwork_enabled && studentId && problem.team_joined" class="problem-team">

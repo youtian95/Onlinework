@@ -480,6 +480,20 @@ def update_problem_state(
     # Use exclude_unset to distinguish between "not provided" and "provided as null"
     # This supports setting deadline to None (removing it)
     update_data = update.model_dump(exclude_unset=True)
+
+    # 规则约束：游客模式与正式发布互斥；团队作业不可设为游客模式。
+    if update_data.get("is_public_view") is True:
+        teamwork_config = session.exec(
+            select(TeamWorkConfig).where(TeamWorkConfig.problem_id == problem_id)
+        ).first()
+        if teamwork_config:
+            raise HTTPException(status_code=400, detail="Teamwork problem cannot be assigned to guest mode")
+        update_data["is_visible"] = False
+        update_data["deadline"] = None
+
+    if update_data.get("is_visible") is True:
+        update_data["is_public_view"] = False
+
     for key, value in update_data.items():
         setattr(state, key, value)
     

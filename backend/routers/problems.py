@@ -49,6 +49,19 @@ router = APIRouter()
 SUBMISSIONS_DIR = PUBLIC_DIR / "submissions"
 
 
+def _has_problem_access(state: Optional[ProblemState], student_id: Optional[str]) -> bool:
+    """访问策略：
+    - 登录用户：只能访问正式发布且非游客模式的题目（is_visible=True 且 is_public_view=False）
+    - 游客：只能访问游客模式题目（is_public_view=True）
+    """
+    if not state or state.is_deleted:
+        return False
+
+    if student_id:
+        return bool(state.is_visible) and not bool(state.is_public_view)
+    return bool(state.is_public_view)
+
+
 def _safe_name(value: str) -> str:
     # \w 包含了字母、数字、下划线以及所有的 Unicode 单词字符（如汉字）
     cleaned = re.sub(r"[^\w\s.-]", "_", str(value or "")).strip(" ._-")
@@ -490,17 +503,8 @@ def list_problems(
         # 1. Check Visibility & Deletion
         state = states_dict.get(name)
         
-        # Default policy: problems without explicit state are UNPUBLISHED
-        is_visible = state.is_visible if state else False
-        is_deleted = state.is_deleted if state else False
-        is_public_view = state.is_public_view if state else False
-        
-        if is_deleted or not is_visible:
+        if not _has_problem_access(state, student_id):
             continue
-
-        # If User is not logged in, only show public view problems
-        if not student_id and not is_public_view:
-             continue
 
         deadline = state.deadline if state else None
         if deadline and deadline.tzinfo is None:
@@ -512,14 +516,14 @@ def list_problems(
 
         script = load_problem_script(name)
         if script and hasattr(script, "meta"):
-            teamwork_config = _ensure_teamwork_config(session, name)
+            teamwork_config = _ensure_teamwork_config(session, name) if student_id else None
             # 计算分数
             meta = ensure_meta_inputs(script.meta)
             meta_inputs = meta.get("inputs", {})
             total_score = 0
             obtained_score = 0
             
-            # Use template rendering to find all input IDs, same as in get_problem logic
+            # 使用模板渲染收集全部 input_id，与 get_problem 的逻辑保持一致
             if student_id:
                 seed = f"{student_id}_{name}"
             else:
@@ -542,18 +546,23 @@ def list_problems(
                     if attempt and attempt.correct:
                         obtained_score += s
 
-            problems.append({
+            item = {
                 "id": name,
                 "title": script.meta.get("title", name),
-                "total_score": total_score,
-                "obtained_score": obtained_score,
                 "is_terminated": is_terminated,
                 "deadline": deadline,
                 "teamwork_enabled": bool(teamwork_config),
                 "team_joined": name in member_by_problem,
                 "team_no": team_name_map.get(member_by_problem[name].team_id, (None, None))[0] if name in member_by_problem else None,
                 "team_name": team_name_map.get(member_by_problem[name].team_id, (None, None))[1] if name in member_by_problem else None,
-            })
+            }
+
+            # 游客模式下不返回得分信息
+            if student_id:
+                item["total_score"] = total_score
+                item["obtained_score"] = obtained_score
+
+            problems.append(item)
     return problems
 
 @router.get("/ranking")
@@ -575,15 +584,12 @@ def get_problem(
     
     # Check access
     state = session.exec(select(ProblemState).where(ProblemState.problem_id == problem_id)).first()
-    if state:
-        if state.is_deleted:
-            raise HTTPException(status_code=404, detail="Problem not found")
-        if not state.is_visible:
-            raise HTTPException(status_code=403, detail="Problem not published")
-        
-        # Guest Access Check
-        if not student_id and not state.is_public_view:
-            raise HTTPException(status_code=403, detail="Access denied for guests")
+    if not _has_problem_access(state, student_id):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # 游客模式题目不允许团队作业
+    if not student_id and teamwork_config:
+        raise HTTPException(status_code=403, detail="Teamwork problem does not support guest access")
 
     if teamwork_config and student_id:
         team_member = _get_student_team_member(session, problem_id, student_id)
@@ -1081,6 +1087,9 @@ def get_ranking(
     current_student: Student = Depends(get_current_student),
     session: Session = Depends(get_session)
 ):
+    if not current_student:
+        raise HTTPException(status_code=403, detail="Guest mode does not support ranking")
+
     teamwork_config = _ensure_teamwork_config(session, problem_id)
     if teamwork_config:
         scope_norm = (scope or "personal").strip().lower()
@@ -1099,15 +1108,10 @@ def submit_answer(req: SubmitRequest, session: Session):
 
     # 0. Check Lifecycle
     state = session.exec(select(ProblemState).where(ProblemState.problem_id == req.problem_id)).first()
+    if not _has_problem_access(state, req.student_id):
+        raise HTTPException(status_code=403, detail="Problem not available")
+
     if state:
-        if state.is_deleted:
-             raise HTTPException(status_code=404, detail="Problem not found")
-        if not state.is_visible:
-             raise HTTPException(status_code=403, detail="Problem not available")
-        # Check guest access if no student_id
-        if not req.student_id and not state.is_public_view:
-             raise HTTPException(status_code=403, detail="Guest submission not allowed")
-             
         if state.deadline:
              if datetime.now(timezone.utc) > state.deadline.replace(tzinfo=timezone.utc):
                  raise HTTPException(status_code=400, detail="Submission deadline passed")
@@ -1125,7 +1129,7 @@ def submit_answer(req: SubmitRequest, session: Session):
         raise HTTPException(status_code=404, detail="Problem not found")
 
     # 2. 重新生成参数
-    # Use fixed seed for guests
+    # 游客使用固定种子
     seed = f"{req.student_id}_{req.problem_id}" if req.student_id else f"public_{req.problem_id}"
     rng = get_stable_rng(seed)
     params = script.generate(rng)
@@ -1170,7 +1174,7 @@ def submit_answer(req: SubmitRequest, session: Session):
         return {
             "correct": all(results.values()) if results else False,
             "results": results,
-            "attempt_status": {}, # No persistence for guests
+            "attempt_status": {}, # 游客模式不落库
             "message": "Answer verified (Guest Mode)"
         }
 
@@ -1348,27 +1352,20 @@ def get_problem_resource(
                 if student and student.enabled:
                     current_student = student
 
-    # 1. Access Check
+    # 1. 访问控制检查
     state = session.exec(select(ProblemState).where(ProblemState.problem_id == problem_id)).first()
     student_id = current_student.student_id if current_student else None
     
-    if state:
-        if state.is_deleted:
-             raise HTTPException(status_code=404, detail="Problem not found")
-        if not state.is_visible:
-             raise HTTPException(status_code=403, detail="Problem not published")
-             
-        # Guest Access Check
-        if not student_id and not state.is_public_view:
-             raise HTTPException(status_code=403, detail="Access denied")
+    if not _has_problem_access(state, student_id):
+        raise HTTPException(status_code=403, detail="Access denied")
 
-    # 2. Safety Check
+    # 2. 文件安全检查
     if filename.endswith(".py") or filename.startswith(".") or "__pycache__" in filename:
         raise HTTPException(status_code=403, detail="Access denied to source files")
 
     file_path = os.path.join(PROBLEMS_DIR, problem_id, filename)
     
-    # 3. Path Traversal Check
+    # 3. 路径穿越检查
     try:
         abs_path = os.path.abspath(file_path)
         base_path = os.path.abspath(os.path.join(PROBLEMS_DIR, problem_id))
