@@ -8,7 +8,7 @@
             <div class="export-section">
                 <div class="section-header">
                     <h4>📊 成绩报表</h4>
-                    <span class="desc">导出所有学生的各题目得分明细表格 (CSV)</span>
+                    <span class="desc">导出所有学生的各题目得分明细表格 (XLSX)</span>
                 </div>
                 <div class="section-action">
                     <button @click="downloadScores" class="primary-btn" :disabled="loadingScores">
@@ -54,6 +54,16 @@
 <script setup>
 import { ref } from 'vue'
 import axios from 'axios'
+import JSZip from 'jszip'
+import html2canvas from 'html2canvas'
+import { jsPDF } from 'jspdf'
+import { marked } from 'marked'
+import markedKatex from 'marked-katex-extension'
+// 引入样式，保证前端能正确渲染 Markdown 和 KaTex 以便 html2pdf 截图
+import 'github-markdown-css/github-markdown.css'
+
+// 注册 Katex 插件
+marked.use(markedKatex({ throwOnError: false, trust: true, strict: 'ignore' }))
 
 const props = defineProps({
     adminToken: String
@@ -65,6 +75,123 @@ const loadingDB = ref(false)
 const loadingImport = ref(false)
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
+const waitForNextFrame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()))
+
+const prepareImages = async (container) => {
+    const images = Array.from(container.querySelectorAll('img'))
+
+    await Promise.all(images.map((img) => {
+        const src = img.getAttribute('src') || ''
+        if (!src || (!src.startsWith('http') && !src.startsWith('data:') && !src.startsWith('blob:'))) {
+            img.remove()
+            return Promise.resolve()
+        }
+
+        img.crossOrigin = 'anonymous'
+
+        if (img.complete) {
+            return Promise.resolve()
+        }
+
+        return new Promise((resolve) => {
+            img.onload = () => resolve()
+            img.onerror = () => {
+                img.remove()
+                resolve()
+            }
+        })
+    }))
+}
+
+const renderMarkdownToPdfBlob = async (mdContent) => {
+    const container = document.createElement('div')
+    container.className = 'markdown-body export-pdf-render-root'
+    container.style.position = 'fixed'
+    container.style.left = '0'
+    container.style.top = '0'
+    container.style.width = '794px'
+    container.style.padding = '24px'
+    container.style.background = '#ffffff'
+    container.style.color = '#000000'
+    container.style.zIndex = '99999'
+    container.style.pointerEvents = 'none'
+    container.style.boxSizing = 'border-box'
+    container.style.overflow = 'visible'
+    container.innerHTML = marked.parse(mdContent)
+
+    document.body.appendChild(container)
+
+    try {
+        await waitForNextFrame()
+        await waitForNextFrame()
+        await prepareImages(container)
+        await waitForNextFrame()
+
+        const canvas = await html2canvas(container, {
+            backgroundColor: '#ffffff',
+            scale: 2,
+            useCORS: true,
+            logging: false,
+            imageTimeout: 0,
+            scrollX: 0,
+            scrollY: 0,
+            windowWidth: Math.ceil(container.scrollWidth),
+            windowHeight: Math.ceil(container.scrollHeight)
+        })
+
+        const pdf = new jsPDF({
+            orientation: 'portrait',
+            unit: 'mm',
+            format: 'a4'
+        })
+
+        const margin = 10
+        const pageWidth = pdf.internal.pageSize.getWidth()
+        const pageHeight = pdf.internal.pageSize.getHeight()
+        const renderWidth = pageWidth - margin * 2
+        const pageContentHeight = pageHeight - margin * 2
+        const pageCanvasHeight = Math.floor((pageContentHeight * canvas.width) / renderWidth)
+
+        let offsetY = 0
+        let isFirstPage = true
+
+        while (offsetY < canvas.height) {
+            const sliceHeight = Math.min(pageCanvasHeight, canvas.height - offsetY)
+            const pageCanvas = document.createElement('canvas')
+            pageCanvas.width = canvas.width
+            pageCanvas.height = sliceHeight
+
+            const pageContext = pageCanvas.getContext('2d')
+            pageContext.drawImage(
+                canvas,
+                0,
+                offsetY,
+                canvas.width,
+                sliceHeight,
+                0,
+                0,
+                canvas.width,
+                sliceHeight
+            )
+
+            const pageImage = pageCanvas.toDataURL('image/png')
+            const pageRenderHeight = (sliceHeight * renderWidth) / canvas.width
+
+            if (!isFirstPage) {
+                pdf.addPage()
+            }
+
+            pdf.addImage(pageImage, 'PNG', margin, margin, renderWidth, pageRenderHeight, undefined, 'FAST')
+            offsetY += sliceHeight
+            isFirstPage = false
+        }
+
+        return pdf.output('blob')
+    } finally {
+        document.body.removeChild(container)
+    }
+}
+
 const downloadScores = async () => {
     loadingScores.value = true
     try {
@@ -75,7 +202,7 @@ const downloadScores = async () => {
         const url = window.URL.createObjectURL(new Blob([response.data]))
         const link = document.createElement('a')
         link.href = url
-        link.setAttribute('download', `scores_${new Date().toISOString().slice(0,10)}.csv`)
+        link.setAttribute('download', `scores_${new Date().toISOString().slice(0,10)}.xlsx`)
         document.body.appendChild(link)
         link.click()
         link.remove()
@@ -92,17 +219,43 @@ const downloadWork = async () => {
     try {
         const response = await axios.get(`${API_BASE_URL}/admin/export/work`, {
             params: { token: props.adminToken },
-            responseType: 'blob'
+            responseType: 'arraybuffer'
         })
-        const url = window.URL.createObjectURL(new Blob([response.data]))
+        
+        // 1. 使用 JSZip 读取后端返回的 ZIP 文件
+        const zip = await JSZip.loadAsync(response.data)
+        const mdFiles = []
+        
+        zip.forEach((relativePath, zipEntry) => {
+            if (relativePath.endsWith('.md')) {
+                mdFiles.push(zipEntry)
+            }
+        })
+        
+        if (mdFiles.length > 0) {
+            for (let i = 0; i < mdFiles.length; i++) {
+                const entry = mdFiles[i]
+                const mdContent = await entry.async("string")
+                const pdfBlob = await renderMarkdownToPdfBlob(mdContent)
+                
+                // 将新拿到的 Blob PDF 塞进现在的压缩包里相同的学生目录下
+                const pdfPath = entry.name.replace('.md', '.pdf')
+                zip.file(pdfPath, pdfBlob)
+            }
+        }
+        
+        // 4. 全部渲染完成后重新打包带 pdf 的 zip 并触发下载
+        const finalZipBlob = await zip.generateAsync({ type: 'blob' })
+        const url = window.URL.createObjectURL(finalZipBlob)
         const link = document.createElement('a')
         link.href = url
         link.setAttribute('download', `student_work_${new Date().toISOString().slice(0,10)}.zip`)
         document.body.appendChild(link)
         link.click()
         link.remove()
+        
     } catch (e) {
-        alert('下载失败')
+        alert('下载失败: 解析或生成 PDF 时出错，请查看控制台排查原因。')
         console.error(e)
     } finally {
         loadingWork.value = false

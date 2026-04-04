@@ -44,6 +44,15 @@ SUBPROBLEM_BLOCK_RE = re.compile(
 
 
 def _ensure_utc_datetime(value: datetime | None) -> datetime | None:
+    """
+    确保给定的 datetime 对象为确切的 UTC 时区时间。
+    
+    Args:
+        value (datetime | None): 输入时间的 datetime 对象，可能不带时区(naive)或带其它时区(aware)。
+        
+    Returns:
+        datetime | None: 带有 UTC 时区信息的 datetime 对象。若输入为 None，则原样返回。
+    """
     if value is None:
         return None
     if value.tzinfo is None:
@@ -51,6 +60,15 @@ def _ensure_utc_datetime(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 def ensure_meta_inputs(meta):
+    """
+    检查并规范化脚本中配置的 meta 字典，确保包含完整的 meta.get("inputs") 字典结构。
+    
+    Args:
+        meta (dict|Any): 从 script.py 读取得到的原 meta 对象，有可能未配置 "inputs"。
+        
+    Returns:
+        dict: 规范后的 meta 字典，能够安全调用 meta.get("inputs", {})。
+    """
     if not isinstance(meta, dict):
         return {"inputs": {}}
     if "inputs" not in meta or meta.get("inputs") is None:
@@ -73,6 +91,16 @@ class ProblemInputs:
         return f'<span id="{input_id}" class="problem-input-placeholder" style="display:inline-block; min-width: 40px;"></span>'
 
 def collect_input_ids(problem_id: str, params: dict) -> list:
+    """
+    运行一遍 Jinja2 模板渲染，收集题目 Markdown 文件中动态出现的所有 {{ input("id") }} 的占位符 ID。
+    
+    Args:
+        problem_id (str): 题目的目录名或唯一标识。
+        params (dict): 本次渲染采用的动态参数字典(来源于 script.generate)。
+        
+    Returns:
+        list[str]: 题目中出现的所有填空框输入标识 id 数组。在文件不存在时尝试捕获异常返回空列表。
+    """
     md_path = os.path.join(PROBLEMS_DIR, problem_id, "problem.md")
     if not os.path.exists(md_path):
         return []
@@ -91,6 +119,18 @@ def collect_input_ids(problem_id: str, params: dict) -> list:
 
 
 def split_problem_markdown_by_subproblems(content: str):
+    """
+    通过正则拆分包含 <subproblem> 标签嵌套的 Markdown 题目文件，建立子问题的序列信息。
+    
+    Args:
+        content (str): 完整的 Markdown 原生题目文本。
+        
+    Returns:
+        tuple[list[dict], str, list[dict]]: (blocks, plain_content, render_sequence)
+            - blocks: 每一个子任务块的内容字典数组，字典里包括 "subproblem_no", "title", "content"。
+            - plain_content: 去除全部 <subproblem> 块后拼凑起来的公共正文。
+            - render_sequence: 保留原始文档顺序的一个渲染动作描述数组，按 "plain" 或是 "subproblem" 排列。
+    """
     blocks = []
     plain_parts = []
     render_sequence = []
@@ -133,6 +173,20 @@ def split_problem_markdown_by_subproblems(content: str):
 
 
 def get_problem_subproblem_bundle(problem_id: str, params: dict):
+    """
+    根据给定的题目ID和生成好的特定参数，解析并分别渲染带有团队合作特性的题目的子版块及普通正文，提取各个填空与板块的从属映射。
+    
+    Args:
+        problem_id (str): 题库中的题目文件夹名称/ID。
+        params (dict): 本次题目的生成参数 (来自 script.generate(rng))。
+        
+    Returns:
+        dict: 最终预渲染并归约的打包对象：
+            - `plain_content`: 原始过滤子问题的纯文本。
+            - `input_subproblem_map`: 填空题 id 到子题块序号 subproblem_no 的 `dict[str, int]` 映射。
+            - `subproblems`: 经过参数渲染完成的含 html 结构的各个子题列表。
+            - `render_sequence`: 合并的带序号的块信息渲染顺序表。
+    """
     md_path = os.path.join(PROBLEMS_DIR, problem_id, "problem.md")
     if not os.path.exists(md_path):
         return {
@@ -197,7 +251,17 @@ def get_problem_subproblem_bundle(problem_id: str, params: dict):
     }
 
 def get_problem_input_ids(problem_id: str, script=None) -> list:
-    """Helper to collect all input ids for a problem dynamically regardless of meta config"""
+    """
+    无论 meta (预设配置) 是否存在，动态收集属于该问题实际能产生且必须要填写的所有 inputs 标识符列表。
+    由于同一个题目下 `public_{problem_id}` 种子是固定的，这会渲染一遍来拿取列表。
+    
+    Args:
+        problem_id (str): 题目 ID 或文件夹。
+        script (module, optional): 从问题包里提前 load(包含 meta 等) 的对象，如果为 None 内部尝试懒加载。
+        
+    Returns:
+        list[str]: 该问题出现的所有填空项 id 列表。错误返回空列。
+    """
     if not script:
         script = load_problem_script(problem_id)
         if not script:
@@ -219,6 +283,12 @@ def get_problem_input_ids(problem_id: str, script=None) -> list:
         return []
 
 def load_problem_script(problem_id: str):
+    """
+    载入题目脚本，返回模块对象。题目脚本必须位于 PROBLEMS_DIR/problem_id/script.py。
+    
+    Returns:
+        module: 如果脚本存在且成功加载，返回模块对象；否则返回 None。模块对象中应该包含 generate(rng) 函数和 meta 属性（可选）。
+    """
     script_path = os.path.join(PROBLEMS_DIR, problem_id, "script.py")
     if not os.path.exists(script_path):
         return None
@@ -234,6 +304,16 @@ def load_problem_script(problem_id: str):
 
 
 def get_checker_classes(script_module):
+    """
+    自省提取给定的脚本库中所有正确继承于 NumericCheckTemplate 的自定义校验类（排除基类本身）。
+    自动按各类的 .order 属性（如果有）以及名字进行字典排序。
+    
+    Args:
+        script_module (module): 从问题路径 `script.py` 中载入的 python 模块。
+        
+    Returns:
+        list[class]: 能被用于检查输入答案是否合规的业务相关类别的对象列表。
+    """
     checker_classes = []
     if not script_module:
         return checker_classes
@@ -253,6 +333,20 @@ def get_checker_classes(script_module):
 
 
 def run_checker_classes(script_module, params: Dict[str, Any], user_answers: Dict[str, Any]):
+    """
+    自动调用属于这个题目脚本中所有正确的 NumericCheckTemplate 的派生类中的 run() 方法进行验证判断。
+    
+    Args:
+        script_module (module): `script.py` 中载入的包含各类 checker 的 python 模块。
+        params (Dict[str, Any]): 原题目的正确随机渲染参数。
+        user_answers (Dict[str, Any]): 用户实际填入的各个输入控件字符串及答案。
+        
+    Returns:
+        Dict[str, bool]: 用户的每个 `input_id` 及其正误映射 (`{"ans_1": True, "ans_2": False}`). 
+        
+    Raises:
+        ValueError: 存在类没有基类，不符合规范或重写了基类 run。
+    """
     checker_classes = get_checker_classes(script_module)
     if not checker_classes:
         raise ValueError("Problem script must define at least one class inheriting NumericCheckTemplate")
@@ -275,6 +369,19 @@ def run_checker_classes(script_module, params: Dict[str, Any], user_answers: Dic
     return merged_results
 
 def require_student(session: Session, student_id: str) -> Student:
+    """
+    检查学生是否存在并被允许参加作业的便捷函数。
+    
+    Args:
+        session (Session): 当前数据库活跃会话上下文。
+        student_id (str): HTTP 依赖查询获取的学生唯一学号。
+        
+    Returns:
+        Student: 若合法，抛出对应的 Student Model 表内实例对象记录。
+        
+    Raises:
+        HTTPException: 未授权异常（401 无效或缺失）或 403 (不存在、禁用)。
+    """
     if not student_id:
          raise HTTPException(status_code=401, detail="Authentication required")
          
@@ -292,6 +399,22 @@ def build_attempt_status(
     input_ids: list,
     meta_inputs: dict,
 ):
+    """
+    根据给定的题目(组)对学生进行当前填空答题信息的查表统计状态：比如一共能错几次，错了多少，还剩多少次，最后锁定等等。
+    该状态最后发给前端直接绑定到 UI 对应控件上控制红色、绿色或禁用输入。
+    
+    Args:
+        session (Session): 提供数据表操作的 SQLModel 当前上下文请求。
+        student_id (str): 做题人的固定身份 UUID 账户 ID。若为空游客不生成对应的作答尝试。
+        problem_id (str): 分类所在的题目问题目录 ID。
+        input_ids (list[str]): 从 problem 的模板中提取出来的被认领或者完整的占位框 input 的 ID name。
+        meta_inputs (dict): 自从题目模块的设置信息 meta["inputs"] 对每一个空规定的一些选项。
+        
+    Returns:
+        dict: 为题目中所有传入的输入框分别建立映射：
+              {"ans_1": {"attempts": 2, "remaining": 1, "correct": False, "locked": False, 
+                         "max_attempts": 3, "last_answer": "111"}}
+    """
     status = {}
     unique_input_ids = list(set(input_ids))
     for input_id in unique_input_ids:
@@ -329,6 +452,27 @@ def build_attempt_status(
     return status
 
 def get_problem_content_and_status(session: Session, problem_id: str, student_id: str = None):
+    """
+    提供学生或者游客身份时打开该题目详情的全部状态包、生成的带有题目具体数据的页面 HTML 及所有尝试结果。
+    是该模块最上层的渲染组装层和题目数据 API 层。
+    
+    Args:
+        session (Session): 当前全局数据数据库实例。
+        problem_id (str): 请求加载哪个题目页。
+        student_id (str, optional): 需要渲染专属数据种子的学生记录 ID，如果它是一个公开查看页面或游客就是 `None` 会使用默认生成方式。
+    
+    Returns:
+        dict: 前端 `ProblemDetail.vue` 核心渲染视图所需信息的 `dict` 结构，带有详细地：
+        - id: 当前 url 所对应的题库号
+        - content: Jinja 过滤完替换了 <span id> 参数但是未做 markdown 的模板内容
+        - input_ids: 总共有哪些参数槽位名。
+        - meta: (包含尝试、分配分值的信息)
+        - attempt_status: 每个参数槽用户目前的状态进度和对不对。
+        - subproblems, input_subproblem_map, render_sequence: 提供给带有不同认领的 `团体合作题` 中的拆开列表与占位信息映射关系集合。
+    
+    Raises:
+        HTTPException: 问题不存在(404)，找不到文件，没有对应同学等。
+    """
     # 验证题目是否存在
     script = load_problem_script(problem_id)
     if not script:
@@ -388,18 +532,28 @@ def get_problem_content_and_status(session: Session, problem_id: str, student_id
     }
 
 # 获取题目排名
-# 
-# 返回格式:
-#    [
-#       {
-#           "student_id": "stu01",
-#           "score": 30,
-#           "last_update": "2024-01-01T12:00:00Z",
-#           "rank": 1
-#       },
-#       ...
-#    ]
 def get_problem_ranking(session: Session, problem_id: str):
+    """
+    抓取某个非团队的具体问题(Problem id)，返回所有参与答题并且非退选/隐藏的学生的分数排行计算表 (会缓存 _CACHE_TTL 秒)。
+    
+    Args:
+        session (Session): 活跃请求会话。
+        problem_id (str): 分数统计排行榜所在的这道具体大题名称或文件夹。
+        
+    Returns:
+        list[dict]: 题目分数排行表记录:
+        [
+           {
+              "student_id": "stu01",
+              "name": "张三",
+              "score": 30,
+              "pdf_path": None,
+              "last_update": "2024-01-01T12:00:00Z",
+              "rank": 1
+          },
+          ...
+       ]
+    """
     # 1. 检查缓存
     now = time.time()
     if problem_id in _RANKING_CACHE:

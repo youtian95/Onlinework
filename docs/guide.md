@@ -218,7 +218,22 @@ cd onlinework
 - 使用 1Panel 的`网站`-`证书`功能为该网站申请免费的 HTTPS 证书。
 - 网站开启 HTTPS，选择上一步的证书。
 
-#### 4. 后续更新
+#### 设置502错误页面
+
+在更新网站的过程中，用户会显示502 Bad Gateway错误，因为后端服务还没有启动。可以设置一个自定义的502错误页面，提示用户网站正在维护中，等部署完成后再改回正常页面。
+
+1. 在 1Panel 网站配置的 `server { ... }` 中添加以下内容（放在 `include ... proxy/*.conf` 前面）：
+
+    ```nginx
+    error_page 502 503 504 = /502.html;
+    location = /502.html {
+        internal;
+    }
+    ```
+
+2. 上传准备好的 `frontend/502.html` 到网站的 `index`（根目录）路径下。
+
+#### 后续更新
 
 当你有新代码提交到 GitHub 后，在服务器上更新：
 
@@ -235,11 +250,6 @@ git pull
 # `docker-compose.yml` 改回原来的端口映射
 git stash pop
 
-
-# 2. 重新构建并重启（命令行方式）
+# 重启容器
 docker compose up -d --build
-
-# 2. 重新构建并重启 (1Panel方式)
-# 在1Panel的容器镜中停止，删除镜像，清楚镜像缓存，然后再次部署docker-compose.yml，不然可能会使用旧镜像导致代码更新无效。
-
 ```

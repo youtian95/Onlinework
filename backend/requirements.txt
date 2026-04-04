@@ -8,7 +8,6 @@ sqlmodel
 bcrypt
 python-dotenv
 markdown
-markdown-pdf
 pyjwt
 beautifulsoup4
 reportlab
