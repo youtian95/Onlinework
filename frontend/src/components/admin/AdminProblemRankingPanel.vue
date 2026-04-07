@@ -1,104 +1,145 @@
 <template>
   <section class="card side-card">
     <template v-if="teamworkEnabled">
-      <div class="card-title-row">
-        <h2>小组排名与成员</h2>
-        <span class="meta-text">{{ teamworkConfig.team_count }} 组 / 每组 {{ teamworkConfig.team_size }} 人</span>
-      </div>
-
-      <div class="config-row">
-        <div class="config-field">
-          <label for="team-count-input">队伍数量</label>
-          <input id="team-count-input" v-model="teamCountDraft" type="number" min="1" class="count-input" />
+      <div class="panel-block">
+        <div class="card-title-row">
+          <h2>小组排名与成员</h2>
+          <span class="meta-text">{{ teamworkConfig.team_count }} 组 / 每组 {{ teamworkConfig.team_size }} 人</span>
         </div>
-        <div class="config-field fixed-field">
-          <label>每队人数</label>
-          <div class="fixed-value">{{ teamworkConfig.team_size }}</div>
+
+        <div class="config-row">
+          <div class="config-field">
+            <label for="team-count-input">队伍数量</label>
+            <input id="team-count-input" v-model="teamCountDraft" type="number" min="1" class="count-input" />
+          </div>
+          <div class="config-field fixed-field">
+            <label>每队人数</label>
+            <div class="fixed-value">{{ teamworkConfig.team_size }}</div>
+          </div>
+          <button type="button" class="save-btn" :disabled="savingTeamConfig || !canSaveTeamCount" @click="saveTeamCount">
+            {{ savingTeamConfig ? '保存中...' : '保存数量' }}
+          </button>
         </div>
-        <button type="button" class="save-btn" :disabled="savingTeamConfig || !canSaveTeamCount" @click="saveTeamCount">
-          {{ savingTeamConfig ? '保存中...' : '保存数量' }}
-        </button>
-      </div>
-      <div class="config-note">团队作业创建后只允许修改队伍数量，人数固定不变。</div>
+        <div class="config-note">团队作业创建后只允许修改队伍数量，人数固定不变。</div>
 
-      <div class="selector-row">
-        <label for="team-select">查看小组:</label>
-        <select id="team-select" :value="selectedTeamId ?? ''" @change="emitTeamChange($event)">
-          <option v-for="team in teamRows" :key="team.team_id" :value="team.team_id">
-            {{ team.name || `第${team.team_no}队` }}
-          </option>
-        </select>
-      </div>
+        <div class="selector-row">
+          <label for="team-select">查看小组:</label>
+          <select id="team-select" :value="selectedTeamId ?? ''" @change="emitTeamChange($event)">
+            <option v-for="team in teamRows" :key="team.team_id" :value="team.team_id">
+              {{ team.name || `第${team.team_no}队` }}
+            </option>
+          </select>
+        </div>
 
-      <div class="rank-summary" v-if="selectedTeamId">
-        <template v-if="selectedTeam && selectedTeam.rank">
-          当前小组排名: <strong>第 {{ selectedTeam.rank }} 名</strong>
-        </template>
-        <template v-else>
-          当前小组暂未上榜
-        </template>
-      </div>
+        <div class="rank-summary" v-if="selectedTeamId">
+          <template v-if="selectedTeam && selectedTeam.rank">
+            当前小组排名: <strong>第 {{ selectedTeam.rank }} 名</strong>
+          </template>
+          <template v-else>
+            当前小组暂未上榜
+          </template>
+        </div>
 
-      <div class="team-table-wrapper">
-        <table class="team-table">
-          <thead>
-            <tr>
-              <th>排名</th>
-              <th>队伍</th>
-              <th>状态</th>
-              <th>得分</th>
-              <th>得分率</th>
-              <th>成员</th>
-              <th>最后更新</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="team in teamRows"
-              :key="team.team_id"
-              :class="{ 'selected-row': team.team_id === selectedTeamId }"
-            >
-              <td>
-                <span class="rank-badge" :class="`rank-${team.rank}`">{{ team.rank || '-' }}</span>
-              </td>
-              <td><strong>{{ team.name || `第${team.team_no}队` }}</strong></td>
-              <td>
-                <span class="status-pill" :class="progressClass(team)">
-                  {{ progressText(team) }}
+        <div class="team-table-wrapper">
+          <table class="team-table">
+            <thead>
+              <tr>
+                <th>排名</th>
+                <th>队伍</th>
+                <th>状态</th>
+                <th>得分</th>
+                <th>得分率</th>
+                <th>成员</th>
+                <th>最后更新</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="team in teamRows"
+                :key="team.team_id"
+                :class="{ 'selected-row': team.team_id === selectedTeamId }"
+              >
+                <td>
+                  <span class="rank-badge" :class="`rank-${team.rank}`">{{ team.rank || '-' }}</span>
+                </td>
+                <td><strong>{{ team.name || `第${team.team_no}队` }}</strong></td>
+                <td>
+                  <span class="status-pill" :class="progressClass(team)">
+                    {{ progressText(team) }}
+                  </span>
+                </td>
+                <td>{{ team.score }} / {{ team.total_possible }}</td>
+                <td>{{ team.score_rate }}%</td>
+                <td>{{ team.member_count }} / {{ team.max_members }}</td>
+                <td>{{ formatTime(team.last_update) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <article class="member-card" v-if="selectedTeam">
+          <div class="member-card-header">
+            <strong>{{ selectedTeam.name || `第${selectedTeam.team_no}队` }}</strong>
+            <span>{{ selectedTeam.member_count }} 人</span>
+          </div>
+
+          <ul v-if="selectedTeam.members.length" class="member-list">
+            <li v-for="member in selectedTeam.members" :key="`${selectedTeam.team_id}-${member.student_id}`">
+              <div>
+                <span class="member-name">{{ member.name || member.student_id }}</span>
+                <span class="member-id">{{ member.student_id }}</span>
+              </div>
+              <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+                <span class="claim-chip">
+                  {{ member.claimed_subproblem ? `认领子题 ${member.claimed_subproblem}` : '未认领' }}
                 </span>
-              </td>
-              <td>{{ team.score }} / {{ team.total_possible }}</td>
-              <td>{{ team.score_rate }}%</td>
-              <td>{{ team.member_count }} / {{ team.max_members }}</td>
-              <td>{{ formatTime(team.last_update) }}</td>
-            </tr>
-          </tbody>
-        </table>
+                <a v-if="member.pdf_path" :href="`${API_BASE_URL.replace('/api', '')}/public/${member.pdf_path}`" target="_blank" class="download-link" style="font-size: 11px;">📥 PDF</a>
+                <span v-else class="empty-data" style="font-size: 11px;">无PDF</span>
+              </div>
+            </li>
+          </ul>
+          <div v-else class="empty-members">暂无成员</div>
+        </article>
       </div>
 
-      <article class="member-card" v-if="selectedTeam">
-        <div class="member-card-header">
-          <strong>{{ selectedTeam.name || `第${selectedTeam.team_no}队` }}</strong>
-          <span>{{ selectedTeam.member_count }} 人</span>
+      <div class="panel-block">
+        <div class="card-title-row">
+          <h2>个人排名</h2>
         </div>
-
-        <ul v-if="selectedTeam.members.length" class="member-list">
-          <li v-for="member in selectedTeam.members" :key="`${selectedTeam.team_id}-${member.student_id}`">
-            <div>
-              <span class="member-name">{{ member.name || member.student_id }}</span>
-              <span class="member-id">{{ member.student_id }}</span>
-            </div>
-            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
-              <span class="claim-chip">
-                {{ member.claimed_subproblem ? `认领子题 ${member.claimed_subproblem}` : '未认领' }}
-              </span>
-              <a v-if="member.pdf_path" :href="`${API_BASE_URL.replace('/api', '')}/public/${member.pdf_path}`" target="_blank" class="download-link" style="font-size: 11px;">📥 PDF</a>
-              <span v-else class="empty-data" style="font-size: 11px;">无PDF</span>
-            </div>
-          </li>
-        </ul>
-        <div v-else class="empty-members">暂无成员</div>
-      </article>
+        <div class="team-table-wrapper">
+          <table class="team-table">
+            <thead>
+              <tr>
+                <th>排名</th>
+                <th>学号</th>
+                <th>姓名</th>
+                <th>队伍</th>
+                <th>认领子题</th>
+                <th>得分</th>
+                <th>得分率</th>
+                <th>PDF文件</th>
+                <th>最后更新</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in rankingRows" :key="`team-personal-${row.student_id}`">
+                <td>{{ row.rank }}</td>
+                <td>{{ row.student_id }}</td>
+                <td>{{ row.name || '-' }}</td>
+                <td>{{ row.team_no ? `第${row.team_no}队` : '-' }}</td>
+                <td>{{ row.subproblem_no ? `子题 ${row.subproblem_no}` : '未认领' }}</td>
+                <td>{{ row.score }} / {{ row.total_possible }}</td>
+                <td>{{ row.score_rate }}%</td>
+                <td>
+                  <a v-if="row.pdf_path" :href="`${API_BASE_URL.replace('/api', '')}/public/${row.pdf_path}`" target="_blank" class="download-link">📥 下载</a>
+                  <span v-else class="empty-data">未上传</span>
+                </td>
+                <td>{{ formatTime(row.last_update) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </template>
 
     <template v-else>
@@ -509,6 +550,10 @@ const saveTeamCount = () => {
   text-align: center;
   padding: 24px;
   color: #64748b;
+}
+
+.panel-block + .panel-block {
+  margin-top: 18px;
 }
 
 @media (max-width: 720px) {

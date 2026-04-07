@@ -74,6 +74,19 @@ class ArchiveCreateRequest(BaseModel):
     name: str
 
 class ExportInputHelper:
+    """
+    生成 Markdown 报告时的可调用辅助器。
+
+    在模板中通过 input(...) 被调用，根据 input_id 读取答题记录，
+    返回带颜色和分值的渲染片段，并在调用过程中累计总分统计。
+
+    Attributes:
+        inputs: 模板渲染过程中实际被调用过的 input_id 列表。
+        attempts_map: dict, { input_id: Attempt }, 学生作答记录映射，键为 input_id。
+        meta_inputs: dict，{input_id: {score: int, ...}}，题目输入的配置信息映射。
+        total_possible: 本题可得总分（分母），在每次 input(...) 调用时累计。
+        total_obtained: 本题实得总分（分子），在每次 input(...) 调用时累计。
+    """
     def __init__(self, attempts_map, meta_inputs):
         self.inputs = []
         self.attempts_map = attempts_map
@@ -1102,7 +1115,9 @@ def export_work(session: Session = Depends(get_session), token: str = Query(...)
                     # 我们保持把队伍作业的所有空都带上(以便在最终报告中渲染出整份试卷)，
                     # 但是对于不属于该学生认领的空，我们要将其该空的配分强制设为 0，以此规避错误统计其他人的分
                     meta_inputs = {}
-                    for iid, conf in full_meta_inputs.items():
+                    input_ids = get_problem_input_ids(pid, script)
+                    for iid in sorted(set(input_ids)):
+                        conf = full_meta_inputs.get(iid, {}) if isinstance(full_meta_inputs, dict) else {}
                         conf_dict = dict(conf) if isinstance(conf, dict) else {}
                         if iid not in allowed_input_ids:
                             conf_dict["score"] = 0

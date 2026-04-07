@@ -418,6 +418,7 @@ const saveTeamCount = async (nextTeamCount) => {
 
     await loadTeamOverview()
     await loadTeamRanking()
+    await loadStudentRanking()
 
     if (!teamRows.value.some((item) => item.team_id === selectedTeamId.value)) {
       selectedTeamId.value = teamRows.value.length > 0 ? teamRows.value[0].team_id : null
@@ -459,6 +460,7 @@ const loadPage = async () => {
 
     if (teamworkEnabled.value) {
       await loadTeamRanking()
+      await loadStudentRanking()
       if (teamRows.value.length > 0 && selectedTeamId.value === null) {
         selectedTeamId.value = teamRows.value[0].team_id
       }
