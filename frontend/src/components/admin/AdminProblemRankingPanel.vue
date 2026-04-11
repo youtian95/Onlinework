@@ -93,7 +93,7 @@
                 <span class="claim-chip">
                   {{ member.claimed_subproblem ? `认领子题 ${member.claimed_subproblem}` : '未认领' }}
                 </span>
-                <a v-if="member.pdf_path" :href="`${API_BASE_URL.replace('/api', '')}/public/${member.pdf_path}`" target="_blank" class="download-link" style="font-size: 11px;">📥 PDF</a>
+                <a v-if="member.pdf_path" :href="`${API_BASE_URL}/admin/submission-download?pdf_path=${encodeURIComponent(member.pdf_path)}&token=${encodeURIComponent(props.adminToken || '')}`" class="download-link" style="font-size: 11px;">📥 ZIP</a>
                 <span v-else class="empty-data" style="font-size: 11px;">无PDF</span>
               </div>
             </li>
@@ -131,7 +131,7 @@
                 <td>{{ row.score }} / {{ row.total_possible }}</td>
                 <td>{{ row.score_rate }}%</td>
                 <td>
-                  <a v-if="row.pdf_path" :href="`${API_BASE_URL.replace('/api', '')}/public/${row.pdf_path}`" target="_blank" class="download-link">📥 下载</a>
+                  <a v-if="row.pdf_path" :href="`${API_BASE_URL}/admin/submission-download?pdf_path=${encodeURIComponent(row.pdf_path)}&token=${encodeURIComponent(props.adminToken || '')}`" class="download-link">📥 下载ZIP</a>
                   <span v-else class="empty-data">未上传</span>
                 </td>
                 <td>{{ formatTime(row.last_update) }}</td>
@@ -189,7 +189,7 @@
               <td>{{ row.name || '-' }}</td>
               <td>{{ row.score }}</td>
               <td>
-                <a v-if="row.pdf_path" :href="`${API_BASE_URL.replace('/api', '')}/public/${row.pdf_path}`" target="_blank" class="download-link">📥 下载</a>
+                <a v-if="row.pdf_path" :href="`${API_BASE_URL}/admin/submission-download?pdf_path=${encodeURIComponent(row.pdf_path)}&token=${encodeURIComponent(props.adminToken || '')}`" class="download-link">📥 下载ZIP</a>
                 <span v-else class="empty-data">未上传</span>
               </td>
               <td>{{ formatTime(row.last_update) }}</td>
@@ -258,6 +258,10 @@ const props = defineProps({
   savingTeamConfig: {
     type: Boolean,
     default: false,
+  },
+  adminToken: {
+    type: String,
+    default: '',
   },
 })
 

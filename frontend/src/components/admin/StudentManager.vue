@@ -232,7 +232,7 @@
                                   <span class="prob-id">{{ p.id }}</span>
                               </div>
                               <div class="prob-pdf-status">
-                                  <a v-if="p.pdf_path" :href="`${API_BASE_URL.replace('/api', '')}/public/${p.pdf_path}`" target="_blank" class="pdf-download-link">📥 下载PDF</a>
+                                  <a v-if="p.pdf_path" :href="`${API_BASE_URL}/admin/submission-download?pdf_path=${encodeURIComponent(p.pdf_path)}&token=${encodeURIComponent(props.adminToken || '')}`" class="pdf-download-link">📥 下载ZIP</a>
                                   <span v-else class="pdf-not-uploaded">未上传PDF</span>
                               </div>
                           </div>

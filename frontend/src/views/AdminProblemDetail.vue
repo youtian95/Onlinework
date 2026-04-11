@@ -83,6 +83,7 @@
         :progress-class="progressClass"
         :format-time="formatTime"
         :saving-team-config="savingTeamConfig"
+        :admin-token="adminToken"
         @update:selected-team-id="onTeamChange"
         @update:selected-student-id="onStudentChange"
         @save:team-count="saveTeamCount"

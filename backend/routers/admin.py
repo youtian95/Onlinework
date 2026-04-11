@@ -1,5 +1,5 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Header, Form
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Header, Form, Query
+from fastapi.responses import FileResponse, Response
 from sqlmodel import Session, select, delete
 from pydantic import BaseModel
 from backend.db import engine
@@ -29,15 +29,17 @@ from backend.services.problems import (
     collect_input_ids,
     get_problem_input_ids
 )
-from backend.core.config import ADMIN_PASSWORD
+from backend.core.config import ADMIN_PASSWORD, PUBLIC_DIR
 from backend.core.security import pwd_context, create_access_token, verify_token
 import csv
 import io
 import os
+import zipfile
 from typing import List, Optional
 from datetime import datetime, timezone
 
 router = APIRouter()
+ZIP_COMPRESS_LEVEL = 9
 
 class AdminLoginRequest(BaseModel):
     password: str
@@ -85,6 +87,17 @@ def _verify_admin_token_value(token: Optional[str]):
         return payload
 
     raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _build_submission_zip_response(file_path: str, download_name: str) -> Response:
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=ZIP_COMPRESS_LEVEL) as zip_file:
+        zip_file.write(file_path, arcname=download_name)
+
+    zip_bytes = zip_buffer.getvalue()
+    response = Response(content=zip_bytes, media_type="application/zip")
+    response.headers["Content-Disposition"] = f'attachment; filename="{download_name}.zip"'
+    return response
 
 
 # 管理员鉴权依赖
@@ -1047,6 +1060,42 @@ def get_admin_problem_file(
         raise HTTPException(status_code=404, detail="File not found")
 
     return FileResponse(file_path)
+
+
+@router.get('/submission-download')
+def download_submission_as_zip(
+    pdf_path: str = Query(...),
+    token: Optional[str] = Query(None),
+    x_admin_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+):
+    auth_token = x_admin_token or token or authorization
+    if auth_token and auth_token.startswith("Bearer "):
+        auth_token = auth_token.split(" ", 1)[1]
+
+    _verify_admin_token_value(auth_token)
+
+    normalized_path = pdf_path.replace('\\', '/').lstrip('/')
+    if not normalized_path.startswith('submissions/'):
+        raise HTTPException(status_code=403, detail='Invalid submission path')
+
+    file_path = PUBLIC_DIR / normalized_path
+
+    try:
+        resolved_path = file_path.resolve()
+        submissions_root = (PUBLIC_DIR / 'submissions').resolve()
+        if submissions_root not in resolved_path.parents:
+            raise HTTPException(status_code=403, detail='Invalid submission path')
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=403, detail='Invalid submission path')
+
+    if not resolved_path.exists() or not resolved_path.is_file():
+        raise HTTPException(status_code=404, detail='File not found')
+
+    download_name = os.path.basename(normalized_path)
+    return _build_submission_zip_response(str(resolved_path), download_name)
 
 @router.get('/ranking', dependencies=[Depends(verify_admin)])
 def get_admin_total_ranking(session: Session = Depends(get_session)):

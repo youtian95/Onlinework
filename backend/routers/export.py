@@ -54,6 +54,9 @@ import shutil
 
 router = APIRouter(prefix="/admin/export", tags=["export"])
 
+# 显式指定压缩级别，范围是 0-9，数值越大压缩率越高但速度越慢。
+ZIP_COMPRESS_LEVEL = 9
+
 def get_session():
     with Session(engine) as session:
         yield session
@@ -121,7 +124,7 @@ class ExportInputHelper:
 
 def create_db_dump_bytes(session: Session) -> bytes:
     zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=ZIP_COMPRESS_LEVEL) as zip_file:
         
         # 1. Students
         s_out = io.StringIO()
@@ -1010,7 +1013,7 @@ def export_work(session: Session = Depends(get_session), token: str = Query(...)
     # 将打包生成的 ZIP 文件流缓存在系统内存中
     zip_buffer = io.BytesIO()
     
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=ZIP_COMPRESS_LEVEL) as zip_file:
         # =====================================================================
         # 3. 提前批量加载数据库记录，建立内存索引字典，避免在双层大循环中频繁查库(解决 N+1 查询问题)
         # =====================================================================
@@ -1157,6 +1160,11 @@ def export_work(session: Session = Depends(get_session), token: str = Query(...)
                         zip_file.write(pdf_full_path, arcname=f"{s_folder}/{pid}_附件_{pdf_name}")
 
     zip_buffer.seek(0)
-    response = Response(content=zip_buffer.getvalue(), media_type="application/zip")
+    zip_bytes = zip_buffer.getvalue()
+    payload_bytes = len(zip_bytes)
+    print(f"[export_work] payload_bytes={payload_bytes}")
+    logging.info(f"[export_work] payload_bytes={payload_bytes}")
+
+    response = Response(content=zip_bytes, media_type="application/zip")
     response.headers["Content-Disposition"] = f"attachment; filename=student_work_{datetime.now().strftime('%Y%m%d')}.zip"
     return response
