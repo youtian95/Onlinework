@@ -249,3 +249,6 @@ git stash pop
 # 重启容器
 docker compose up -d --build
 ```
+
+
+测试git使用
