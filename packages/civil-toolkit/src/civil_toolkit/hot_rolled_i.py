@@ -55,6 +55,12 @@ class ISection:
     
     Wy: float
     """弱轴截面抵抗矩 (cm3)"""
+    
+    Sx: float
+    """强轴半截面面积矩 (cm3) [对应 max Sy]"""
+    
+    Sy: float
+    """弱轴半截面面积矩 (cm3) [对应 max Sz]"""
 
 _I_SECTION_DATA: Optional[List[ISection]] = None
 
@@ -93,6 +99,8 @@ def _load_i_section_data() -> List[ISection]:
     # 14: Iz (弱轴 cm4 -> Iy)
     # 16: iy (强轴 mm -> ix 取 cm)
     # 17: iz (弱轴 mm -> iy 取 cm)
+    # 19: max Sy (强轴面积矩 cm3 -> Sx)
+    # 20: max Sz (弱轴面积矩 cm3 -> Sy)
     # 21: Wy (强轴 cm3 -> Wx)
     # 22: Wz (弱轴 cm3 -> Wy)
     # 47: G (kg/m -> weight)
@@ -138,6 +146,8 @@ def _load_i_section_data() -> List[ISection]:
                 Iy=safe_float(row[14]),
                 ix=safe_float(row[16], divisor=10.0),  # mm 转化为 cm
                 iy=safe_float(row[17], divisor=10.0),  # mm 转化为 cm
+                Sx=safe_float(row[19]),
+                Sy=safe_float(row[20]),
                 Wx=safe_float(row[21]),
                 Wy=safe_float(row[22]),
             )
