@@ -74,11 +74,17 @@ class TeamWorkConfigUpdate(BaseModel):
     team_size: Optional[int] = None
 
 def get_session():
+    """
+    获取数据库会话(Session)依赖
+    """
     with Session(engine) as session:
         yield session
 
 
 def _verify_admin_token_value(token: Optional[str]):
+    """
+    内部函数：验证并解析管理员Token
+    """
     if not token:
         raise HTTPException(status_code=401, detail="Missing Token")
 
@@ -90,6 +96,9 @@ def _verify_admin_token_value(token: Optional[str]):
 
 
 def _build_submission_zip_response(file_path: str, download_name: str) -> Response:
+    """
+    内部函数：构造 Zip 下载响应并返回 FastAPI Response
+    """
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=ZIP_COMPRESS_LEVEL) as zip_file:
         zip_file.write(file_path, arcname=download_name)
@@ -117,6 +126,9 @@ def verify_admin(
 
 
 def _extract_teamwork_meta(problem_id: str) -> dict:
+    """
+    内部函数：从题目脚本对象的 meta 中提取团队作业配置字典
+    """
     script = load_problem_script(problem_id)
     if not script or not hasattr(script, "meta"):
         return {}
@@ -133,6 +145,9 @@ def _extract_teamwork_meta(problem_id: str) -> dict:
 
 
 def _resolve_teamwork_numbers(problem_id: str, payload: TeamWorkConfigUpdate) -> tuple[int, int]:
+    """
+    内部函数：解析并验证团队作业配置中的团队数量和人数上限参数
+    """
     teamwork_meta = _extract_teamwork_meta(problem_id)
 
     team_count = payload.team_count if payload.team_count is not None else teamwork_meta.get("team_count")
@@ -157,6 +172,9 @@ def _resolve_teamwork_numbers(problem_id: str, payload: TeamWorkConfigUpdate) ->
 
 
 def _has_teamwork_data(session: Session, problem_id: str) -> bool:
+    """
+    内部函数：检查指定的题目是否已经产生了组队数据（如队伍成员、认领记录、提交等）
+    """
     if session.exec(select(TeamMember.id).where(TeamMember.problem_id == problem_id)).first() is not None:
         return True
     if session.exec(select(TeamSubproblemClaim.id).where(TeamSubproblemClaim.problem_id == problem_id)).first() is not None:
@@ -169,6 +187,9 @@ def _has_teamwork_data(session: Session, problem_id: str) -> bool:
 
 
 def _parse_positive_int(value, field_name: str) -> int:
+    """
+    内部函数：将字符串解析为正整数，带有简单的异常处理
+    """
     try:
         parsed = int(value)
     except (TypeError, ValueError):
@@ -181,6 +202,9 @@ def _parse_positive_int(value, field_name: str) -> int:
 
 
 def _sync_team_rows(session: Session, problem_id: str, team_count: int, team_size: int):
+    """
+    内部函数：根据给定的团队数量和人数要求，同步更新、新建或删除数据库中的 Team 及其关联数据
+    """
     existing_teams = session.exec(
         select(Team).where(Team.problem_id == problem_id).order_by(Team.team_no)
     ).all()
@@ -342,6 +366,9 @@ def _build_admin_team_attempt_status(
 
 @router.post("/login")
 def admin_login(req: AdminLoginRequest):
+    """
+    管理员登录接口，验证密码并下发 admin 权限令牌
+    """
     if req.password == ADMIN_PASSWORD:
         access_token = create_access_token(data={"sub": "admin", "role": "admin"})
         return {"token": access_token}
@@ -350,6 +377,9 @@ def admin_login(req: AdminLoginRequest):
 
 @router.post("/students/upload", dependencies=[Depends(verify_admin)])
 async def upload_students(file: UploadFile = File(...), session: Session = Depends(get_session)):
+    """
+    批量上传学生白名单信息（支持 CSV 文件）并更新数据库
+    """
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV file is supported")
 
@@ -527,6 +557,9 @@ def update_problem_state(
 
 @router.get('/teamwork/{problem_id}/config', dependencies=[Depends(verify_admin)])
 def get_teamwork_config(problem_id: str, session: Session = Depends(get_session)):
+    """
+    获取指定团队作业题目的分组和认领配置信息
+    """
     config = session.exec(
         select(TeamWorkConfig).where(TeamWorkConfig.problem_id == problem_id)
     ).first()
@@ -629,6 +662,9 @@ def init_teamwork_teams(
 
 @router.get('/teamwork/{problem_id}/overview', dependencies=[Depends(verify_admin)])
 def get_teamwork_overview(problem_id: str, session: Session = Depends(get_session)):
+    """
+    获取指定团队作业题目的全局概览数据，包括所有队伍成员、分数及认领的子题目状态
+    """
     config = session.exec(
         select(TeamWorkConfig).where(TeamWorkConfig.problem_id == problem_id)
     ).first()
@@ -698,6 +734,9 @@ def get_teamwork_overview(problem_id: str, session: Session = Depends(get_sessio
 
 @router.get("/students", dependencies=[Depends(verify_admin)])
 def list_students(deleted_only: bool = False, session: Session = Depends(get_session)):
+    """
+    获取系统中所有的学生列表（可根据 deleted_only 筛选已删除或未删除的学生）
+    """
     query = select(Student)
     if deleted_only:
         query = query.where(Student.is_deleted == True)
@@ -708,6 +747,9 @@ def list_students(deleted_only: bool = False, session: Session = Depends(get_ses
 
 @router.post("/students", dependencies=[Depends(verify_admin)])
 def create_student(req: CreateStudentRequest, session: Session = Depends(get_session)):
+    """
+    管理员手动创建一个新的学生账号
+    """
     existing = session.exec(select(Student).where(Student.student_id == req.student_id)).first()
     if existing:
         raise HTTPException(status_code=400, detail="Student ID already exists")
@@ -730,6 +772,9 @@ def create_student(req: CreateStudentRequest, session: Session = Depends(get_ses
 
 @router.put("/students/{student_id}", dependencies=[Depends(verify_admin)])
 def update_student(student_id: str, update: StudentUpdate, session: Session = Depends(get_session)):
+    """
+    更新一个已有学生的基本状态属性（如是否测试账号、是否启用、是否删除等）
+    """
     student = session.exec(select(Student).where(Student.student_id == student_id)).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
@@ -739,6 +784,18 @@ def update_student(student_id: str, update: StudentUpdate, session: Session = De
     if update.enabled is not None:
         student.enabled = update.enabled
     if update.is_deleted is not None:
+        if update.is_deleted and not student.is_deleted:
+            # 账号删除时退出当前队伍并释放名额，同时删除相应的子题目认领记录
+            session.exec(delete(TeamMember).where(TeamMember.student_id == student_id))
+            session.exec(delete(TeamSubproblemClaim).where(TeamSubproblemClaim.student_id == student_id))
+            
+            # 删除作答和提交记录，确保离队后其分数不再算入原队伍总分
+            session.exec(delete(TeamAttempt).where(TeamAttempt.student_id == student_id))
+            session.exec(delete(TeamSubmission).where(TeamSubmission.student_id == student_id))
+            session.exec(delete(Attempt).where(Attempt.student_id == student_id))
+            
+            # 查找并删除此人的个人 PDF 作业文件（按需清理文件以防止残留，或者仅清数据依赖实际情况，这里清理数据库关联记录）
+            session.exec(delete(ProblemSubmission).where(ProblemSubmission.student_id == student_id))
         student.is_deleted = update.is_deleted
         
     session.add(student)
@@ -748,17 +805,34 @@ def update_student(student_id: str, update: StudentUpdate, session: Session = De
 
 @router.delete("/students/{student_id}", dependencies=[Depends(verify_admin)])
 def delete_student(student_id: str, session: Session = Depends(get_session)):
+    """
+    逻辑删除指定的学生，并释放对应的组队名额、清除认领记录
+    """
     student = session.exec(select(Student).where(Student.student_id == student_id)).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
     
     student.is_deleted = True
     session.add(student)
+    
+    # 账号删除时退出当前队伍并释放名额，同时删除相应的子题目认领记录
+    session.exec(delete(TeamMember).where(TeamMember.student_id == student_id))
+    session.exec(delete(TeamSubproblemClaim).where(TeamSubproblemClaim.student_id == student_id))
+    
+    # 删除作答和提交记录，确保离队后其分数不再算入原队伍总分
+    session.exec(delete(TeamAttempt).where(TeamAttempt.student_id == student_id))
+    session.exec(delete(TeamSubmission).where(TeamSubmission.student_id == student_id))
+    session.exec(delete(Attempt).where(Attempt.student_id == student_id))
+    session.exec(delete(ProblemSubmission).where(ProblemSubmission.student_id == student_id))
+    
     session.commit()
-    return {"message": "Moved to recycle bin"}
+    return {"message": "Moved to recycle bin and freed team slots"}
 
 @router.get('/students/{student_id}/progress', dependencies=[Depends(verify_admin)])
 def get_student_progress_data(student_id: str, session: Session = Depends(get_session)):
+    """
+    获取特定学生的各题目作答进度、尝试次数以及分数提交等详细信息
+    """
     problems_data = []
     
     if not os.path.exists(PROBLEMS_DIR):
@@ -907,6 +981,9 @@ def update_attempt(req: UpdateAttemptRequest, session: Session = Depends(get_ses
 
 @router.get('/problems', dependencies=[Depends(verify_admin)])
 def list_admin_problems(session: Session = Depends(get_session)):
+    """
+    获取管理员视角的全部题目列表信息及状态，包括是否启用团队模式等
+    """
     problems = []
     if not os.path.exists(PROBLEMS_DIR):
         return []
@@ -991,7 +1068,7 @@ def get_admin_problem_content(
     if deadline and deadline.tzinfo is None:
         deadline = deadline.replace(tzinfo=timezone.utc)
 
-    render_student_id = normalized_student_id if not teamwork_config else None
+    render_student_id = normalized_student_id
     content = get_problem_content_and_status(session, problem_id, render_student_id)
 
     if isinstance(content, dict):
@@ -1099,4 +1176,7 @@ def download_submission_as_zip(
 
 @router.get('/ranking', dependencies=[Depends(verify_admin)])
 def get_admin_total_ranking(session: Session = Depends(get_session)):
+    """
+    获取基于所有作业和提交计算得出的系统全局总排行榜
+    """
     return get_total_ranking(session)

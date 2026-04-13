@@ -345,7 +345,7 @@ const loadProblemContent = async () => {
   if (teamworkEnabled.value && selectedTeamId.value !== null) {
     params.team_id = selectedTeamId.value
   }
-  if (!teamworkEnabled.value && selectedStudentId.value) {
+  if (selectedStudentId.value) {
     params.student_id = selectedStudentId.value
   }
 
@@ -436,6 +436,7 @@ const saveTeamCount = async (nextTeamCount) => {
 const onTeamChange = async (nextTeamId) => {
   if (typeof nextTeamId === 'number') {
     selectedTeamId.value = nextTeamId
+    selectedStudentId.value = null // reset student selection when team changes
   }
   await loadProblemContent()
 }

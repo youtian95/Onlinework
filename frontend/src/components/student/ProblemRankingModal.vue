@@ -72,7 +72,6 @@
                             <td>
                                 <div class="team-cell">
                                     <strong>{{ item.team_name || `第 ${item.team_no} 队` }}</strong>
-                                    <span class="team-sub">第 {{ item.team_no }} 队</span>
                                 </div>
                             </td>
                             <td>{{ item.member_count }}</td>
@@ -303,11 +302,6 @@ onMounted(async () => {
     display: flex;
     flex-direction: column;
     gap: 2px;
-}
-
-.team-sub {
-    font-size: 12px;
-    color: #94a3b8;
 }
 
 .loading-state-mini { text-align: center; padding: 40px; color: #999; }

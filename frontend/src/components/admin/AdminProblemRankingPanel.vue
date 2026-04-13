@@ -84,8 +84,11 @@
           </div>
 
           <ul v-if="selectedTeam.members.length" class="member-list">
-            <li v-for="member in selectedTeam.members" :key="`${selectedTeam.team_id}-${member.student_id}`">
-              <div>
+            <li v-for="member in selectedTeam.members" 
+                :key="`${selectedTeam.team_id}-${member.student_id}`"
+                :class="{ 'selected-member': member.student_id === selectedStudentId }"
+                @click="emitStudentChange(member.student_id)">
+              <div class="member-info">
                 <span class="member-name">{{ member.name || member.student_id }}</span>
                 <span class="member-id">{{ member.student_id }}</span>
               </div>
@@ -289,8 +292,9 @@ const emitTeamChange = (event) => {
   emit('update:selectedTeamId', raw === '' ? null : Number(raw))
 }
 
-const emitStudentChange = (event) => {
-  emit('update:selectedStudentId', event?.target?.value || '')
+const emitStudentChange = (payload) => {
+  const value = payload?.target !== undefined ? payload.target.value : payload
+  emit('update:selectedStudentId', value || '')
 }
 
 const saveTeamCount = () => {
@@ -526,6 +530,24 @@ const saveTeamCount = () => {
   border-radius: 8px;
   background: #f8fafc;
   border: 1px solid #e5e7eb;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.member-list li:hover {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+
+.member-list li.selected-member {
+  border-color: #2563eb;
+  background: #e0f2fe;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.member-info {
+  display: flex;
+  flex-direction: column;
 }
 
 .member-name {

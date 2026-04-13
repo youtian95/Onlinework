@@ -80,12 +80,12 @@ Python 脚本包含三个部分：`meta`（元数据）、`generate`（参数生
   }
   ```
 
-   - `title`：题目标题。
-   - `teamwork`（分组作业不写）：团队合作相关配置。
-     - `team_size`：每个队伍的人数，设置后该题目为团队作业。
-   - `inputs`（可以不写）：一个字典，键为输入框 ID（如 `ans_1`），值为该输入框的配置。
-     - `max_attempts`：该输入框允许的最大尝试次数，单个填空未配置 `max_attempts` 时默认 3 次。
-     - `score`：该输入框答对时的分值，未配置 `score` 时默认 1 分
+  - `title`：题目标题。
+  - `teamwork`（分组作业不写）：团队合作相关配置。
+    - `team_size`：每个队伍的人数，设置后该题目为团队作业。
+  - `inputs`（可以不写）：一个字典，键为输入框 ID（如 `ans_1`），值为该输入框的配置。
+    - `max_attempts`：该输入框允许的最大尝试次数，单个填空未配置 `max_attempts` 时默认 3 次。
+    - `score`：该输入框答对时的分值，未配置 `score` 时默认 1 分。
 - **`generate` 函数（必填）**：
   - 接收 `rng`（一个基于学号固定的随机数生成器）。
   - 使用 `rng.randint(min, max)` 等方法生成随机数。
@@ -155,6 +155,7 @@ Python 脚本包含三个部分：`meta`（元数据）、`generate`（参数生
     npm install
     cd .. 
     ```
+
 - 添加 `.env.secret`：
 
    ```ini
@@ -276,6 +277,3 @@ git stash pop
 # 重启容器
 docker compose up -d --build
 ```
-
-
-测试git使用

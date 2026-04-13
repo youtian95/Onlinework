@@ -409,7 +409,7 @@ const toggleDeletedView = () => {
 }
 
 const deleteStudent = async (s) => {
-    if (!confirm(`确定要将 ${s.name || s.student_id} 移入回收站吗？\n该用户将无法登录。`)) return
+    if (!confirm(`确定要将 ${s.name || s.student_id} 移入回收站吗？\n\n警告：此次操作将不可逆地清理其所有的答题进度、已提交的作业记录。其原有队伍归属将被解除且不再计入队伍成绩！该用户亦将无法登录。\n\n确认执行吗？`)) return
     try {
         await axios.delete(`${API_BASE_URL}/admin/students/${s.student_id}`, {
              headers: { 'X-Admin-Token': props.adminToken }
