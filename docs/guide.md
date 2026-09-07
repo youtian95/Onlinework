@@ -165,6 +165,8 @@ Python 脚本包含三个部分：`meta`（元数据）、`generate`（参数生
    SECRET_KEY=your-super-secret-key-please-change-it
    ```
 
+- 执行 `vscode` 任务"启动本地开发环境" 或者按下面的命令启动前后端。
+
 - 启动前端
 
   ```bash
@@ -257,12 +259,12 @@ cd onlinework
 
 2. 上传准备好的 `frontend/502.html` 到网站的 `index`（根目录）路径下。
 
-#### 后续更新
+### 后续更新
 
-当你有新代码提交到 GitHub 后，在服务器上更新：
+有新代码提交到 GitHub 后，在服务器上更新：
 
 ```bash
-# 停止当前运行的容器
+# 1panel中进入站点目录 /opt/onlinework 的命令行，停止当前运行的容器
 docker compose down
 
 # `docker-compose.yml`文件如果修改过端口，这里需要先暂存修改
@@ -277,3 +279,7 @@ git stash pop
 # 重启容器
 docker compose up -d --build
 ```
+
+### 增加题目/修改标题等
+
+现在本地`/backend/problems/`目录下的题目文件夹创建题目，然后按照本地调试项目的方式测试题目，确认无误后在正式网站上管理员登录然后上传题目即可。

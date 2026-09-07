@@ -1,0 +1,64 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "启动前端开发服务",
+      "type": "shell",
+      "command": "npm run dev",
+      "options": {
+        "cwd": "${workspaceFolder}/frontend"
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "base": "$tsc-watch",
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Local:.*"
+        }
+      },
+      "presentation": {
+        "group": "onlinework",
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "启动后端开发服务",
+      "type": "shell",
+      "command": "${workspaceFolder}\\.env\\python.exe",
+      "args": [
+        "-m",
+        "uvicorn",
+        "backend.main:app",
+        "--reload"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "base": "$tsc-watch",
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "Application startup complete\\."
+        }
+      },
+      "presentation": {
+        "group": "onlinework",
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "启动本地开发环境",
+      "dependsOn": [
+        "启动前端开发服务",
+        "启动后端开发服务"
+      ],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    }
+  ]
+}

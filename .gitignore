@@ -43,7 +43,8 @@ backend/problems/demo*/**/__pycache__/
 backend/problems/demo*/**/*.py[cod]
 
 # IDE
-.vscode/
+.vscode/*
+!.vscode/tasks.json
 .idea/
 
 .env.secret
