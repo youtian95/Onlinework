@@ -451,7 +451,7 @@ def build_attempt_status(
         }
     return status
 
-def get_problem_content_and_status(session: Session, problem_id: str, student_id: str = None):
+def get_problem_content_and_status(session: Session, problem_id: str, student_id: str = None, team_id: int = None):
     """
     提供学生或者游客身份时打开该题目详情的全部状态包、生成的带有题目具体数据的页面 HTML 及所有尝试结果。
     是该模块最上层的渲染组装层和题目数据 API 层。
@@ -460,6 +460,7 @@ def get_problem_content_and_status(session: Session, problem_id: str, student_id
         session (Session): 当前全局数据数据库实例。
         problem_id (str): 请求加载哪个题目页。
         student_id (str, optional): 需要渲染专属数据种子的学生记录 ID，如果它是一个公开查看页面或游客就是 `None` 会使用默认生成方式。
+        team_id (int, optional): 管理端空组预览的小组 ID；指定学生时仍使用该学生的实际题目参数。
     
     Returns:
         dict: 前端 `ProblemDetail.vue` 核心渲染视图所需信息的 `dict` 结构，带有详细地：
@@ -484,6 +485,8 @@ def get_problem_content_and_status(session: Session, problem_id: str, student_id
     # 1. 生成随机数生成器 (RNG)
     if student_id:
         seed = f"{student_id}_{problem_id}"
+    elif team_id is not None:
+        seed = f"team_{team_id}_{problem_id}"
     else:
         seed = f"public_{problem_id}" # Fixed seed for guests
         

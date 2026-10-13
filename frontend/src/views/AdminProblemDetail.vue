@@ -136,6 +136,8 @@ const savingTeamConfig = ref(false)
 const selectedTeamId = ref(null)
 const selectedStudentId = ref('')
 const contentVersion = ref(0)
+// 记录题面请求序号，避免快速切换小组时较早的响应覆盖当前选择。
+let contentRequestVersion = 0
 
 const problemId = computed(() => String(route.params.id || ''))
 const teamworkEnabled = computed(() => !!teamworkConfig.value)
@@ -341,6 +343,7 @@ const hydrateProblemContent = async (data) => {
 }
 
 const loadProblemContent = async () => {
+  const requestVersion = ++contentRequestVersion
   const params = {}
   if (teamworkEnabled.value && selectedTeamId.value !== null) {
     params.team_id = selectedTeamId.value
@@ -356,6 +359,7 @@ const loadProblemContent = async () => {
       params,
     },
   )
+  if (requestVersion !== contentRequestVersion) return
   await hydrateProblemContent(res.data)
 }
 

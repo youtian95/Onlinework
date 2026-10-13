@@ -1069,17 +1069,30 @@ def get_admin_problem_content(
         deadline = deadline.replace(tzinfo=timezone.utc)
 
     render_student_id = normalized_student_id
-    content = get_problem_content_and_status(session, problem_id, render_student_id)
+    # 先校验所选队伍，再按指定成员或默认成员的实际种子渲染题面。
+    if teamwork_config and team_id is not None:
+        team = session.exec(
+            select(Team).where(Team.problem_id == problem_id, Team.id == team_id)
+        ).first()
+        if not team:
+            raise HTTPException(status_code=404, detail="Selected team not found")
+        member_query = select(TeamMember).join(Student, Student.student_id == TeamMember.student_id).where(
+            TeamMember.problem_id == problem_id,
+            TeamMember.team_id == team_id,
+            Student.is_deleted == False,
+        )
+        if normalized_student_id:
+            member_query = member_query.where(TeamMember.student_id == normalized_student_id)
+        member = session.exec(member_query.order_by(TeamMember.student_id)).first()
+        if normalized_student_id and not member:
+            raise HTTPException(status_code=400, detail="Selected student is not in selected team")
+        render_student_id = member.student_id if member else None
+
+    content = get_problem_content_and_status(session, problem_id, render_student_id, team_id=team_id)
 
     if isinstance(content, dict):
         if teamwork_config:
             if team_id is not None:
-                team = session.exec(
-                    select(Team).where(Team.problem_id == problem_id, Team.id == team_id)
-                ).first()
-                if not team:
-                    raise HTTPException(status_code=404, detail="Selected team not found")
-
                 meta = content.get("meta", {}) if isinstance(content.get("meta"), dict) else {}
                 meta_inputs = meta.get("inputs", {}) if isinstance(meta.get("inputs"), dict) else {}
                 content["attempt_status"] = _build_admin_team_attempt_status(
@@ -1092,6 +1105,7 @@ def get_admin_problem_content(
                 )
 
             content["selected_team_id"] = team_id
+            content["selected_student_id"] = render_student_id
             content["teamwork_enabled"] = True
         else:
             content["selected_student_id"] = normalized_student_id
