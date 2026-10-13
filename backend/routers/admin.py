@@ -1,3 +1,5 @@
+# 管理端接口模块：接收管理请求，经鉴权后查询或更新数据，返回管理结果及下载文件。
+# 使用流程：由应用注册路由；输入为请求参数和数据库会话，输出为 JSON 或文件响应。
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Header, Form, Query
 from fastapi.responses import FileResponse, Response
 from sqlmodel import Session, select, delete
@@ -35,6 +37,7 @@ import csv
 import io
 import os
 import zipfile
+from urllib.parse import quote
 from typing import List, Optional
 from datetime import datetime, timezone
 
@@ -97,15 +100,22 @@ def _verify_admin_token_value(token: Optional[str]):
 
 def _build_submission_zip_response(file_path: str, download_name: str) -> Response:
     """
-    内部函数：构造 Zip 下载响应并返回 FastAPI Response
+    将附件打包为 ZIP，返回支持中文下载名称的响应。
+
+    参数：
+        file_path：需要打包的附件路径。
+        download_name：附件在压缩包中的名称，同时用于生成 ZIP 下载名称。
     """
+    # 在内存中打包附件，保留原始文件名。
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=ZIP_COMPRESS_LEVEL) as zip_file:
         zip_file.write(file_path, arcname=download_name)
 
     zip_bytes = zip_buffer.getvalue()
     response = Response(content=zip_bytes, media_type="application/zip")
-    response.headers["Content-Disposition"] = f'attachment; filename="{download_name}.zip"'
+    # 响应头使用 ASCII 回退名称，并用 UTF-8 编码传递中文下载名称。
+    encoded_name = quote(f"{download_name}.zip", safe="")
+    response.headers["Content-Disposition"] = f"attachment; filename=\"submission.zip\"; filename*=UTF-8''{encoded_name}"
     return response
 
 
