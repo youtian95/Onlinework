@@ -109,7 +109,10 @@
                             <td>
                                 <button v-if="!showDeleted" @click="openStudentDetail(s)" class="action-btn" style="margin-right: 5px;">查看进度</button>
                                 <button v-if="!showDeleted" @click="deleteStudent(s)" class="action-btn danger">删除</button>
-                                <button v-else @click="restoreStudent(s)" class="action-btn success">恢复账号</button>
+                                <template v-else>
+                                    <button @click="restoreStudent(s)" class="action-btn success" style="margin-right: 5px;">恢复账号</button>
+                                    <button @click="permanentlyDeleteStudent(s)" class="action-btn danger">彻底删除</button>
+                                </template>
                             </td>
                         </tr>
                         <tr v-if="students.length === 0">
@@ -284,6 +287,8 @@
 </template>
 
 <script setup>
+// 学生管理模块：输入管理员令牌，通过管理接口维护学生、回收站及归档，输出列表和操作反馈。
+// 使用流程：加载学生列表，在回收站中选择恢复或彻底删除单个账号。
 import { ref, onMounted, watch } from 'vue'
 import axios from 'axios'
 
@@ -431,6 +436,21 @@ const restoreStudent = async (s) => {
     } catch(e) { 
         if(e.response?.status === 401) emit('logout')
         else alert('恢复失败')
+    }
+}
+
+// 彻底删除单个回收站账号；s 为当前行的学生对象，包含姓名和学号。
+const permanentlyDeleteStudent = async (s) => {
+    if (!confirm(`确定要彻底删除 ${s.name || s.student_id}（学号：${s.student_id}）吗？\n\n账号及关联记录将永久删除，无法恢复，删除后该学号可重新创建。`)) return
+    try {
+        // 调用仅支持回收站账号的接口，成功后刷新当前列表。
+        await axios.delete(`${API_BASE_URL}/admin/students/${encodeURIComponent(s.student_id)}/permanent`, {
+            headers: { 'X-Admin-Token': props.adminToken }
+        })
+        await fetchStudents()
+    } catch (e) {
+        if (e.response?.status === 401) emit('logout')
+        else alert('彻底删除失败：' + (e.response?.data?.detail || e.message))
     }
 }
 

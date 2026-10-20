@@ -838,6 +838,29 @@ def delete_student(student_id: str, session: Session = Depends(get_session)):
     session.commit()
     return {"message": "Moved to recycle bin and freed team slots"}
 
+@router.delete('/students/{student_id}/permanent', dependencies=[Depends(verify_admin)])
+def permanently_delete_student(student_id: str, session: Session = Depends(get_session)):
+    """彻底删除回收站中的单个学生及关联记录，释放其学号。
+
+    参数：
+        student_id：待彻底删除的学生学号。
+        session：执行删除事务的数据库会话。
+    """
+    # 仅允许彻底删除已移入回收站的账号，防止误删正常学生。
+    student = session.exec(select(Student).where(Student.student_id == student_id)).first()
+    if not student:
+        raise HTTPException(status_code=404, detail='学生不存在')
+    if not student.is_deleted:
+        raise HTTPException(status_code=400, detail='请先将学生移入回收站')
+
+    # 在同一事务中清除关联数据及账号，避免重新使用学号时继承旧记录。
+    for model in (TeamMember, TeamSubproblemClaim, TeamAttempt, TeamSubmission, Attempt, ProblemSubmission):
+        session.exec(delete(model).where(model.student_id == student_id))
+    session.delete(student)
+    session.commit()
+    return {'message': '已彻底删除学生账号'}
+
+
 @router.get('/students/{student_id}/progress', dependencies=[Depends(verify_admin)])
 def get_student_progress_data(student_id: str, session: Session = Depends(get_session)):
     """
