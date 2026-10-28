@@ -1,3 +1,4 @@
+<!-- 管理端题目详情：输入路由题目和所选学生，加载题面及作答记录，输出可折叠的子题与排名。切换学生后默认展开其认领子题。 -->
 <template>
   <div class="admin-problem-detail-page">
     <header class="page-header">
@@ -47,8 +48,9 @@
               >
                 <div class="subproblem-header">
                   <strong>子题 {{ segment.subproblem_no }}</strong>
+                  <button type="button" class="collapse-btn" :aria-expanded="isSubproblemOpen(segment.subproblem_no)" @click="toggleSubproblem(segment.subproblem_no)">{{ isSubproblemOpen(segment.subproblem_no) ? '收起内容' : '展开内容' }}</button>
                 </div>
-                <div class="markdown-body" v-html="subproblemMap[segment.subproblem_no].html"></div>
+                <div v-show="isSubproblemOpen(segment.subproblem_no)" class="markdown-body" v-html="subproblemMap[segment.subproblem_no].html"></div>
               </article>
             </template>
           </template>
@@ -62,8 +64,9 @@
             >
               <div class="subproblem-header">
                 <strong>子题 {{ block.subproblem_no }}</strong>
+                <button type="button" class="collapse-btn" :aria-expanded="isSubproblemOpen(block.subproblem_no)" @click="toggleSubproblem(block.subproblem_no)">{{ isSubproblemOpen(block.subproblem_no) ? '收起内容' : '展开内容' }}</button>
               </div>
-              <div class="markdown-body" v-html="block.html"></div>
+              <div v-show="isSubproblemOpen(block.subproblem_no)" class="markdown-body" v-html="block.html"></div>
             </article>
           </template>
         </div>
@@ -135,6 +138,8 @@ const savingTeamConfig = ref(false)
 
 const selectedTeamId = ref(null)
 const selectedStudentId = ref('')
+// 保存当前题面中手动展开或收起的状态，切换查看对象时重新初始化。
+const subproblemOpenOverrides = ref({})
 const contentVersion = ref(0)
 // 记录题面请求序号，避免快速切换小组时较早的响应覆盖当前选择。
 let contentRequestVersion = 0
@@ -166,6 +171,23 @@ const selectedStudentRank = computed(() => {
 const selectedTeam = computed(() => {
   return teamRows.value.find((item) => item.team_id === selectedTeamId.value) || null
 })
+
+// 从队伍成员或学生排名中读取当前学生认领的子题编号。
+const selectedStudentSubproblem = computed(() => {
+  if (!selectedStudentId.value) return null
+  const member = selectedTeam.value?.members?.find((item) => item.student_id === selectedStudentId.value)
+  return member?.claimed_subproblem ?? selectedStudentRank.value?.subproblem_no ?? null
+})
+
+// subproblemNo：待查询的子题编号；优先使用手动状态，否则仅展开当前学生的子题。
+const isSubproblemOpen = (subproblemNo) => {
+  return subproblemOpenOverrides.value[subproblemNo] ?? (Number(subproblemNo) === Number(selectedStudentSubproblem.value))
+}
+
+// subproblemNo：用户点击的子题编号；切换该子题的展开状态。
+const toggleSubproblem = (subproblemNo) => {
+  subproblemOpenOverrides.value[subproblemNo] = !isSubproblemOpen(subproblemNo)
+}
 
 const teamRows = computed(() => {
   return (teams.value || [])
@@ -309,6 +331,8 @@ const renderAttemptPlaceholders = () => {
 }
 
 const hydrateProblemContent = async (data) => {
+  // 新题面默认只展开当前所选学生认领的子题，其他子题保留内容以便点击查看。
+  subproblemOpenOverrides.value = {}
   problemTitle.value = data?.meta?.title || problemId.value
   state.value = data?.state || state.value
   attemptStatus.value = data?.attempt_status || {}
@@ -661,8 +685,26 @@ h1 {
 }
 
 .subproblem-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 8px;
   color: #1d4ed8;
+}
+
+.collapse-btn {
+  padding: 5px 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #fff;
+  color: #1d4ed8;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.collapse-btn:hover {
+  background: #eff6ff;
 }
 
 :deep(.admin-answer-chip) {
