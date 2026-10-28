@@ -1,3 +1,4 @@
+<!-- 学生题目详情模块：读取登录状态和题目数据，展示队伍、题面及作答结果；学生逐空回车提交答案，并可上传计算过程 PDF。 -->
 <template>
   <div class="problem-container">
     <div class="nav-bar">
@@ -56,6 +57,11 @@
       </div>
 
       <template v-if="showProblemBody">
+        <!-- 在队伍信息与题目标题之间提示逐空提交方式。 -->
+        <div class="answer-submit-hint">
+          <span class="answer-submit-icon" aria-hidden="true">💡</span>
+          <strong>按回车逐个提交每个空的答案</strong>
+        </div>
         <ProblemSheet
           ref="problemSheetRef"
           :teamwork-enabled="teamworkEnabled"
@@ -995,6 +1001,26 @@ const submitSingleAnswer = async (inputId) => {
 </style>
 
 <style scoped>
+.answer-submit-hint {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 16px 20px;
+  border: 1px solid #fbbf24;
+  border-left: 5px solid #f59e0b;
+  border-radius: 12px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 18px;
+  line-height: 1.6;
+}
+
+.answer-submit-icon {
+  flex-shrink: 0;
+  font-size: 24px;
+}
+
 .problem-container {
   max-width: 1120px;
   margin: 32px auto 48px;
