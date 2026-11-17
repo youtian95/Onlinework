@@ -48,3 +48,5 @@ backend/problems/demo*/**/*.py[cod]
 .idea/
 
 .env.secret
+
+/tests/

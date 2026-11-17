@@ -1,3 +1,5 @@
+# 钢截面局部稳定模块：按构件及截面类型查询板件宽厚比等级和限值。
+# 使用流程：按轴压、压弯或受弯状态选择函数，输入尺寸、应力梯度和钢材屈服强度，输出等级或限值。
 import math
 from typing import Tuple
 
@@ -187,7 +189,7 @@ def get_flexural_h_section_web_class(h0: float, tw: float, fy: float) -> str:
         return "S1"
     elif ratio <= 72 * ek:
         return "S2"
-    elif ratio <= 105 * ek:
+    elif ratio <= 93 * ek:
         return "S3"
     elif ratio <= 124 * ek:
         return "S4"
@@ -233,11 +235,23 @@ def get_combined_comp_h_section_flange_limit_by_class(cls: str, fy: float) -> fl
 def get_combined_comp_h_section_web_limit_by_class(cls: str, alpha0: float, fy: float) -> float:
     """查询压弯构件（H形截面）腹板在指定等级下的高厚比限值"""
     ek = _get_epsilon_k(fy)
-    if cls == "S1": return (3 + 13 * (alpha0 ** 1.3)) * ek
+    if cls == "S1": return (33 + 13 * (alpha0 ** 1.3)) * ek
     if cls == "S2": return (38 + 13 * (alpha0 ** 1.39)) * ek
     if cls == "S3": return (40 + 18 * (alpha0 ** 1.5)) * ek
     if cls == "S4": return (45 + 25 * (alpha0 ** 1.66)) * ek
     return 250.0
+
+def get_combined_comp_box_section_web_limit_by_class(cls: str, alpha0: float, fy: float) -> float:
+    """查询单向弯曲箱形压弯柱的腹板高厚比限值。
+
+    按 GB 50017-2017 表3.5.1注3，箱形截面柱单向弯曲时的腹板限值可按 H 形腹板采用。
+    :param cls: 板件宽厚比等级，如 S3、S4。
+    :param alpha0: 腹板两边缘的应力梯度 (sigma_max-sigma_min)/sigma_max。
+    :param fy: 钢材屈服强度，单位 MPa。
+    :return: 腹板净高与厚度之比的限值，不是两腹板间翼缘的宽厚比限值。
+    """
+    return get_combined_comp_h_section_web_limit_by_class(cls, alpha0, fy)
+
 
 def get_combined_comp_box_section_flange_limit_by_class(cls: str, fy: float) -> float:
     """查询压弯构件（箱形截面）壁板在指定等级下的宽厚比限值"""
