@@ -1,3 +1,4 @@
+<!-- 题面模块：输入公共题面及子题、认领和折叠状态，输出认领事件；子题作答插槽用于挂载独立文字框。 -->
 <template>
   <section ref="sheetRootRef" class="problem-sheet card-shell">
     <template v-if="teamworkEnabled && renderSequence.length">
@@ -45,6 +46,7 @@
             class="subproblem-body markdown-body"
             v-html="blockOf(segment.subproblem_no).html"
           ></div>
+          <div v-show="isOpen(segment.subproblem_no)"><slot name="subproblem-answer" :block="blockOf(segment.subproblem_no)"></slot></div>
         </article>
       </template>
     </template>
@@ -95,6 +97,7 @@
             class="subproblem-body markdown-body"
             v-html="block.html"
           ></div>
+          <div v-show="isOpen(block.subproblem_no)"><slot name="subproblem-answer" :block="block"></slot></div>
         </article>
       </section>
     </template>

@@ -1,3 +1,4 @@
+# 作业导出与归档模块：输入管理请求及数据库会话，输出下载文件；备份和恢复包括小组文字报告。
 from fastapi import APIRouter, Depends, Query, HTTPException, UploadFile, File, Body
 from fastapi.responses import Response, StreamingResponse, JSONResponse
 from sqlmodel import Session, select, delete
@@ -14,6 +15,7 @@ from backend.models import (
     TeamSubproblemClaim,
     TeamAttempt,
     TeamSubmission,
+    TeamTextSubmission,
 )
 from backend.core.config import ARCHIVES_DIR, PUBLIC_DIR
 from backend.core.security import verify_token
@@ -291,6 +293,14 @@ def create_db_dump_bytes(session: Session) -> bytes:
                 s.updated_at.isoformat() if s.updated_at else "",
             ])
         zip_file.writestr("team_submissions.csv", ts_out.getvalue().encode("utf-8-sig"))
+
+        # 小组文字报告纳入数据库备份，保留换行、最后提交者及版本。
+        text_out = io.StringIO()
+        text_writer = csv.writer(text_out)
+        text_writer.writerow(["problem_id", "team_id", "team_no", "student_id", "subproblem_no", "content", "revision", "updated_at"])
+        for report in session.exec(select(TeamTextSubmission)).all():
+            text_writer.writerow([report.problem_id, report.team_id, team_no_by_id.get(report.team_id), report.student_id, report.subproblem_no, report.content, report.revision, report.updated_at.isoformat()])
+        zip_file.writestr("team_text_submissions.csv", text_out.getvalue().encode("utf-8-sig"))
         
         # 10. PDF Files
         submissions_dir = PUBLIC_DIR / "submissions"
@@ -320,6 +330,7 @@ def restore_db_from_bytes(content: bytes, session: Session):
                 return datetime.fromisoformat(v)
             
             # WIPE DATA
+            session.exec(delete(TeamTextSubmission))
             session.exec(delete(TeamSubmission))
             session.exec(delete(TeamAttempt))
             session.exec(delete(TeamSubproblemClaim))
@@ -519,6 +530,12 @@ def restore_db_from_bytes(content: bytes, session: Session):
                         )
                         session.add(obj)
 
+            # 恢复文字报告，沿用队伍编号映射以适配重新创建后的队伍 ID。
+            if "team_text_submissions.csv" in names:
+                with zf.open("team_text_submissions.csv") as f:
+                    for row in csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig")):
+                        session.add(TeamTextSubmission(problem_id=row["problem_id"], team_id=resolve_team_id(row), student_id=row["student_id"], subproblem_no=int(row["subproblem_no"]), content=row["content"], revision=int(row["revision"]), updated_at=parse_dt(row["updated_at"]) or datetime.now(timezone.utc)))
+
             # Restore PDFs
             for name in names:
                 if name.replace('\\', '/').startswith("public/submissions/"):
@@ -595,6 +612,7 @@ def create_archive(
         
     # 3. Wipe Active Data (Semester Reset Logic)
     try:
+        session.exec(delete(TeamTextSubmission))
         session.exec(delete(TeamSubmission))
         session.exec(delete(TeamAttempt))
         session.exec(delete(TeamSubproblemClaim))

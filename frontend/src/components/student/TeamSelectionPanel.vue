@@ -1,3 +1,4 @@
+<!-- 分组选择模块：输入队伍配置、成员和当前归属，输出加入或换组事件；每位组员认领自己的作答区域。 -->
 <template>
   <section class="teamwork-panel">
     <div class="teamwork-summary card-shell">
@@ -5,7 +6,7 @@
         <p class="eyebrow">团队作业</p>
         <h2>{{ teamJoined ? `当前在 ${currentTeamLabel}` : '请先加入一个队伍' }}</h2>
         <p class="summary-text" v-if="teamConfig">
-          共 {{ teamConfig.team_count }} 队，每队 {{ teamConfig.team_size }} 人，对应 {{ teamConfig.subproblem_count }} 个子问题区域。
+          共 {{ teamConfig.team_count }} 队，每队最多 {{ teamConfig.team_size }} 人，对应 {{ teamConfig.subproblem_count }} 个作答区域，每人认领一个。
         </p>
         <p class="summary-text" v-if="teamJoined && myClaimSubproblem">
           你当前认领的是子题 {{ myClaimSubproblem }}，默认已展开该区域。

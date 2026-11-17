@@ -1,4 +1,5 @@
 <!-- 管理端题目详情：输入路由题目和所选学生，加载题面及作答记录，输出可折叠的子题与排名。切换学生后默认展开其认领子题。 -->
+<!-- 管理端题目详情：输入所选题目、小组和成员，读取题面及提交；计算题展示判题结果，文字作业只读展示报告。 -->
 <template>
   <div class="admin-problem-detail-page">
     <header class="page-header">
@@ -51,6 +52,7 @@
                   <button type="button" class="collapse-btn" :aria-expanded="isSubproblemOpen(segment.subproblem_no)" @click="toggleSubproblem(segment.subproblem_no)">{{ isSubproblemOpen(segment.subproblem_no) ? '收起内容' : '展开内容' }}</button>
                 </div>
                 <div v-show="isSubproblemOpen(segment.subproblem_no)" class="markdown-body" v-html="subproblemMap[segment.subproblem_no].html"></div>
+                <TeamTextReport v-if="isTextAssignment" v-show="isSubproblemOpen(segment.subproblem_no)" :problem-id="problemId" :team-id="selectedTeamId" :subproblem-no="segment.subproblem_no" :submission="textSubmissions[segment.subproblem_no] || {}" read-only />
               </article>
             </template>
           </template>
@@ -67,6 +69,7 @@
                 <button type="button" class="collapse-btn" :aria-expanded="isSubproblemOpen(block.subproblem_no)" @click="toggleSubproblem(block.subproblem_no)">{{ isSubproblemOpen(block.subproblem_no) ? '收起内容' : '展开内容' }}</button>
               </div>
               <div v-show="isSubproblemOpen(block.subproblem_no)" class="markdown-body" v-html="block.html"></div>
+              <TeamTextReport v-if="isTextAssignment" v-show="isSubproblemOpen(block.subproblem_no)" :problem-id="problemId" :team-id="selectedTeamId" :subproblem-no="block.subproblem_no" :submission="textSubmissions[block.subproblem_no] || {}" read-only />
             </article>
           </template>
         </div>
@@ -74,6 +77,7 @@
 
       <AdminProblemRankingPanel
         :teamwork-enabled="teamworkEnabled"
+        :text-assignment="isTextAssignment"
         :teamwork-config="teamworkConfig"
         :team-rows="teamRows"
         :selected-team-id="selectedTeamId"
@@ -102,6 +106,7 @@ import axios from 'axios'
 import { marked } from 'marked'
 import markedKatex from 'marked-katex-extension'
 import AdminProblemRankingPanel from '../components/admin/AdminProblemRankingPanel.vue'
+import TeamTextReport from '../components/student/TeamTextReport.vue'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
@@ -128,6 +133,8 @@ const renderedSubproblems = ref([])
 const renderSequence = ref([])
 const attemptStatus = ref({})
 const inputMeta = ref({})
+const isTextAssignment = ref(false)
+const textSubmissions = ref({})
 
 const teamworkConfig = ref(null)
 const teams = ref([])
@@ -199,7 +206,7 @@ const teamRows = computed(() => {
         score: ranking.score ?? 0,
         total_possible: ranking.total_possible ?? 0,
         score_rate: ranking.score_rate ?? 0,
-        last_update: ranking.last_update || null,
+        last_update: team.text_updated_at || ranking.last_update || null,
       }
     })
     .sort((a, b) => {
@@ -239,12 +246,14 @@ const formatTime = (iso) => {
 }
 
 const progressText = (team) => {
+  if (isTextAssignment.value) return `已提交 ${team.text_submission_count || 0} / ${team.member_count} 人`
   if (Number(team.score_rate) >= 100) return '已完成'
   if (Number(team.score) > 0) return '进行中'
   return '未开始'
 }
 
 const progressClass = (team) => {
+  if (isTextAssignment.value) return team.text_submitted ? 'done' : 'idle'
   if (Number(team.score_rate) >= 100) return 'done'
   if (Number(team.score) > 0) return 'active'
   return 'idle'
@@ -336,6 +345,8 @@ const hydrateProblemContent = async (data) => {
   problemTitle.value = data?.meta?.title || problemId.value
   state.value = data?.state || state.value
   attemptStatus.value = data?.attempt_status || {}
+  isTextAssignment.value = data?.meta?.submission_mode === 'team_text'
+  textSubmissions.value = Object.fromEntries((data?.text_submissions || []).map((report) => [report.subproblem_no, report]))
   contentVersion.value += 1
 
   const metaInputs = data?.meta?.inputs

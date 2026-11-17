@@ -1,7 +1,8 @@
+# 数据模型模块：定义学生、题目、分组及提交记录；应用启动时由 SQLModel 建表，输入业务字段，输出持久化记录。
 from datetime import datetime, timezone
 from typing import Optional
 from sqlmodel import SQLModel, Field
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import Column, Text, UniqueConstraint
 
 
 class Student(SQLModel, table=True):
@@ -160,6 +161,21 @@ class TeamSubmission(SQLModel, table=True):
     student_id: str = Field(index=True)
     pdf_path: str
     original_filename: Optional[str] = None
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class TeamTextSubmission(SQLModel, table=True):
+    """按小组、学生和认领区域保存独立文字作业，不记录分数或判题结果。"""
+
+    __tablename__ = "teamtextanswer"
+    __table_args__ = (UniqueConstraint("problem_id", "team_id", "student_id", name="uq_teamtext_student"), UniqueConstraint("problem_id", "team_id", "subproblem_no", name="uq_teamtext_region"))
+    id: Optional[int] = Field(default=None, primary_key=True)
+    problem_id: str = Field(index=True)
+    team_id: int = Field(index=True)
+    student_id: str  # 当前作答区域的认领者学号。
+    subproblem_no: int = Field(ge=1)
+    content: str = Field(sa_column=Column(Text, nullable=False))
+    revision: int = 1  # 提交版本用于避免同一学生在多个页面编辑时相互覆盖。
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

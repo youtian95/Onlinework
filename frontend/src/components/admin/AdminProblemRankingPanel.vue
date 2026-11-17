@@ -1,9 +1,10 @@
+<!-- 管理端小组侧栏：输入分组、成员、提交或排名数据，输出小组选择与配置事件；文字作业仅展示提交状态。 -->
 <template>
   <section class="card side-card">
     <template v-if="teamworkEnabled">
       <div class="panel-block">
         <div class="card-title-row">
-          <h2>小组排名与成员</h2>
+          <h2>{{ textAssignment ? '小组提交与成员' : '小组排名与成员' }}</h2>
           <span class="meta-text">{{ teamworkConfig.team_count }} 组 / 每组 {{ teamworkConfig.team_size }} 人</span>
         </div>
 
@@ -31,7 +32,7 @@
           </select>
         </div>
 
-        <div class="rank-summary" v-if="selectedTeamId">
+        <div class="rank-summary" v-if="selectedTeamId && !textAssignment">
           <template v-if="selectedTeam && selectedTeam.rank">
             当前小组排名: <strong>第 {{ selectedTeam.rank }} 名</strong>
           </template>
@@ -44,11 +45,11 @@
           <table class="team-table">
             <thead>
               <tr>
-                <th>排名</th>
+                <th v-if="!textAssignment">排名</th>
                 <th>队伍</th>
                 <th>状态</th>
-                <th>得分</th>
-                <th>得分率</th>
+                <th v-if="!textAssignment">得分</th>
+                <th v-if="!textAssignment">得分率</th>
                 <th>成员</th>
                 <th>最后更新</th>
               </tr>
@@ -59,7 +60,7 @@
                 :key="team.team_id"
                 :class="{ 'selected-row': team.team_id === selectedTeamId }"
               >
-                <td>
+                <td v-if="!textAssignment">
                   <span class="rank-badge" :class="`rank-${team.rank}`">{{ team.rank || '-' }}</span>
                 </td>
                 <td><strong>{{ team.name || `第${team.team_no}队` }}</strong></td>
@@ -68,8 +69,8 @@
                     {{ progressText(team) }}
                   </span>
                 </td>
-                <td>{{ team.score }} / {{ team.total_possible }}</td>
-                <td>{{ team.score_rate }}%</td>
+                <td v-if="!textAssignment">{{ team.score }} / {{ team.total_possible }}</td>
+                <td v-if="!textAssignment">{{ team.score_rate }}%</td>
                 <td>{{ team.member_count }} / {{ team.max_members }}</td>
                 <td>{{ formatTime(team.last_update) }}</td>
               </tr>
@@ -96,7 +97,8 @@
                 <span class="claim-chip">
                   {{ member.claimed_subproblem ? `认领子题 ${member.claimed_subproblem}` : '未认领' }}
                 </span>
-                <a v-if="member.pdf_path" :href="`${API_BASE_URL}/admin/submission-download?pdf_path=${encodeURIComponent(member.pdf_path)}&token=${encodeURIComponent(props.adminToken || '')}`" class="download-link" style="font-size: 11px;">📥 ZIP</a>
+                <span v-if="textAssignment" class="empty-data" style="font-size: 11px;">{{ member.text_submitted ? '文字已提交' : '文字未提交' }}</span>
+                <a v-else-if="member.pdf_path" :href="`${API_BASE_URL}/admin/submission-download?pdf_path=${encodeURIComponent(member.pdf_path)}&token=${encodeURIComponent(props.adminToken || '')}`" class="download-link" style="font-size: 11px;">📥 ZIP</a>
                 <span v-else class="empty-data" style="font-size: 11px;">无PDF</span>
               </div>
             </li>
@@ -105,7 +107,7 @@
         </article>
       </div>
 
-      <div class="panel-block">
+      <div v-if="!textAssignment" class="panel-block">
         <div class="card-title-row">
           <h2>个人排名</h2>
         </div>
@@ -210,6 +212,8 @@ import { computed, ref, watch } from 'vue'
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
 const props = defineProps({
+  // textAssignment：是否为只记录提交、不参与排名的分组文字作业。
+  textAssignment: { type: Boolean, default: false },
   teamworkEnabled: {
     type: Boolean,
     default: false,

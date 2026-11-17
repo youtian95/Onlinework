@@ -1,3 +1,4 @@
+<!-- 学生作业列表：读取可见作业、分组及进度并导航；文字作业展示提交状态，不展示得分或排名入口。 -->
 <template>
   <div class="page-container">
     <!-- 顶部导航 -->
@@ -38,6 +39,7 @@
                                 <span v-if="problem.is_terminated" class="badge-terminated">已截止</span>
                             </span>
                             <div class="problem-meta">
+                                <span v-if="problem.submission_mode === 'team_text' && problem.team_joined">{{ problem.text_submitted ? '已提交文字报告' : '尚未提交文字报告' }}</span>
                                 <span class="problem-score" v-if="studentId && problem.total_score !== undefined">
                                     得分: {{ problem.obtained_score }} / {{ problem.total_score }}
                                 </span>
@@ -54,7 +56,7 @@
                         </div>
                     </div>
                     <div class="problem-action">
-                         <span class="rank-btn" v-if="studentId" @click.stop="viewRanking(problem)">🏆 排名</span>
+                         <span class="rank-btn" v-if="studentId && problem.submission_mode !== 'team_text'" @click.stop="viewRanking(problem)">🏆 排名</span>
                         <span class="action-text">
                             {{ getActionText(problem) }}
                         </span>

@@ -1,11 +1,11 @@
-<!-- 学生题目详情模块：读取登录状态和题目数据，展示队伍、题面及作答结果；学生逐空回车提交答案，并可上传计算过程 PDF。 -->
+<!-- 学生题目详情模块：输入登录状态与题目数据，展示分组和题面；普通题逐空判题，文字作业通过独立报告框提交并显示保存状态。 -->
 <template>
   <div class="problem-container">
     <div class="nav-bar">
       <button @click="router.push('/problems')" class="back-btn">← 返回列表</button>
       <div class="nav-right">
         <template v-if="teamworkEnabled && showProblemBody && token">
-          <span class="score-badge team">队伍得分: {{ teamCurrentScore }} / {{ totalScore }}</span>
+          <span v-if="!isTextAssignment" class="score-badge team">队伍得分: {{ teamCurrentScore }} / {{ totalScore }}</span>
           <span v-if="myClaimTotalScore > 0" class="score-badge mine">我的子题: {{ myClaimScore }} / {{ myClaimTotalScore }}</span>
           <span v-if="currentTeamLabel" class="team-badge">{{ currentTeamLabel }}</span>
         </template>
@@ -58,7 +58,7 @@
 
       <template v-if="showProblemBody">
         <!-- 在队伍信息与题目标题之间提示逐空提交方式。 -->
-        <div class="answer-submit-hint">
+        <div v-if="!isTextAssignment" class="answer-submit-hint">
           <span class="answer-submit-icon" aria-hidden="true">💡</span>
           <strong>按回车逐个提交每个空的答案</strong>
         </div>
@@ -80,9 +80,13 @@
           :get-claim-for-subproblem="getClaimForSubproblem"
           @toggle-subproblem="toggleSubproblem"
           @claim-subproblem="claimSubproblem"
-        />
+        >
+          <template #subproblem-answer="{ block }">
+            <TeamTextReport v-if="isTextAssignment" :key="`${teamInfo?.team_id}-${block.subproblem_no}`" :problem-id="String(problemId)" :team-id="teamInfo?.team_id" :subproblem-no="block.subproblem_no" :submission="textSubmissions[block.subproblem_no] || {}" :token="token" :disabled="isTerminated" :read-only="myClaimSubproblem !== block.subproblem_no" />
+          </template>
+        </ProblemSheet>
 
-        <div class="actions" v-if="!isTerminated">
+        <div class="actions" v-if="!isTerminated && !isTextAssignment">
           <div v-if="token" class="pdf-upload-panel">
             <label class="pdf-upload-label" for="pdf-upload-input">作业 PDF：</label>
             <input
@@ -118,6 +122,7 @@ import { marked } from 'marked'
 import markedKatex from 'marked-katex-extension'
 import TeamSelectionPanel from '../components/student/TeamSelectionPanel.vue'
 import ProblemSheet from '../components/student/ProblemSheet.vue'
+import TeamTextReport from '../components/student/TeamTextReport.vue'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
 
@@ -138,6 +143,8 @@ const inputIds = ref([])
 const userAnswers = ref({})
 const attemptStatus = ref({})
 const meta = ref({})
+const textSubmissions = ref({})
+const isTextAssignment = computed(() => meta.value?.submission_mode === 'team_text')
 const isTerminated = ref(false)
 const deadline = ref(null)
 const selectedPdfFile = ref(null)
@@ -382,6 +389,7 @@ const hydrateProblemData = async (data) => {
   inputIds.value = [...new Set(data.input_ids || [])]
   attemptStatus.value = data.attempt_status || {}
   meta.value = data.meta || {}
+  textSubmissions.value = Object.fromEntries((data.text_submissions || []).map((report) => [report.subproblem_no, report]))
   isTerminated.value = !!data.is_terminated
   deadline.value = data.deadline
   hasUploadedPdf.value = !!data.pdf_uploaded
@@ -523,7 +531,7 @@ const getClaimButtonKind = (block) => {
 }
 
 const isClaimButtonDisabled = (block) => {
-  if (!token || !teamJoined.value) return true
+  if (!token || !teamJoined.value || isTerminated.value) return true
   const claim = getClaimForSubproblem(block.subproblem_no)
   return !!claim
 }
@@ -554,6 +562,7 @@ const joinTeam = async (teamNo, forceSwitch = false) => {
     }
     showTeamPanel.value = false
     persistTeamMembership(teamInfo.value)
+    await loadTeamState()
     await loadTeams()
     await loadProblem()
   } catch (e) {

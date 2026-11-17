@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 from backend.utils import get_stable_rng
 from backend.services.problem_check_template import NumericCheckTemplate
+from backend.services.team_text import is_team_text_meta
 from backend.models import (
     Student,
     Attempt,
@@ -170,6 +171,14 @@ def split_problem_markdown_by_subproblems(content: str):
 
     plain_content = "".join(plain_parts)
     return blocks, plain_content, render_sequence
+
+
+def get_teamwork_subproblem_count(problem_id: str, team_size: int) -> int:
+    """确定认领数量；problem_id 为题号，team_size 为每组人数。文字作业以模板实际子题数为准，普通题保持原规则。"""
+    script = load_problem_script(problem_id)
+    if script and is_team_text_meta(getattr(script, "meta", {})):
+        return len(get_problem_subproblem_bundle(problem_id, {})["subproblems"])
+    return team_size
 
 
 def get_problem_subproblem_bundle(problem_id: str, params: dict):
@@ -638,7 +647,12 @@ def get_problem_ranking(session: Session, problem_id: str):
     _RANKING_CACHE[problem_id] = (now, ranking_list)
     
     return ranking_list
+
 def _build_input_subproblem_map(problem_id: str, params: dict, subproblem_count: int) -> Dict[str, int]:
+    # 文字作业不设置解答方案，也没有参与计分的填空。
+    script = load_problem_script(problem_id)
+    if script and is_team_text_meta(getattr(script, "meta", {})):
+        return {}
     bundle = get_problem_subproblem_bundle(problem_id, params)
     mapping = bundle.get("input_subproblem_map", {})
     if len(bundle.get("subproblems", [])) != subproblem_count:
@@ -670,6 +684,10 @@ def _get_input_score_map(problem_id: str, script) -> tuple[list, dict, int]:
 
 
 def get_teamwork_personal_ranking(session: Session, problem_id: str):
+    # 分组文字作业只记录提交，不生成个人排名。
+    script = load_problem_script(problem_id)
+    if script and is_team_text_meta(getattr(script, "meta", {})):
+        return []
     cache_key = f"TW_PERSONAL:{problem_id}"
     now = time.time()
     if cache_key in _RANKING_CACHE:
@@ -804,6 +822,10 @@ def get_teamwork_personal_ranking(session: Session, problem_id: str):
 
 
 def get_teamwork_team_ranking(session: Session, problem_id: str):
+    # 分组文字作业只记录提交，不生成小组排名。
+    script = load_problem_script(problem_id)
+    if script and is_team_text_meta(getattr(script, "meta", {})):
+        return []
     cache_key = f"TW_TEAM:{problem_id}"
     now = time.time()
     if cache_key in _RANKING_CACHE:

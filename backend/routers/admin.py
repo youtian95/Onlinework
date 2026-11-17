@@ -16,12 +16,15 @@ from backend.models import (
     TeamSubproblemClaim,
     TeamAttempt,
     TeamSubmission,
+    TeamTextSubmission,
 )
+from backend.services.team_text import is_team_text_meta, get_team_text_submissions
 from backend.utils import get_stable_rng
 from backend.services.problems import (
     load_problem_script,
     PROBLEMS_DIR,
     get_problem_content_and_status,
+    get_teamwork_subproblem_count,
     get_problem_ranking,
     get_teamwork_personal_ranking,
     get_teamwork_team_ranking,
@@ -193,6 +196,8 @@ def _has_teamwork_data(session: Session, problem_id: str) -> bool:
         return True
     if session.exec(select(TeamSubmission.id).where(TeamSubmission.problem_id == problem_id)).first() is not None:
         return True
+    if session.exec(select(TeamTextSubmission.id).where(TeamTextSubmission.problem_id == problem_id)).first() is not None:
+        return True
     return False
 
 
@@ -222,6 +227,7 @@ def _sync_team_rows(session: Session, problem_id: str, team_count: int, team_siz
 
     removed_team_ids = [team.id for team in existing_teams if team.team_no > team_count and team.id is not None]
     if removed_team_ids:
+        session.exec(delete(TeamTextSubmission).where(TeamTextSubmission.problem_id == problem_id, TeamTextSubmission.team_id.in_(removed_team_ids)))
         session.exec(
             delete(TeamSubmission).where(
                 TeamSubmission.problem_id == problem_id,
@@ -286,7 +292,7 @@ def _save_teamwork_config(
             problem_id=problem_id,
             team_count=parsed_team_count,
             team_size=parsed_team_size,
-            subproblem_count=parsed_team_size,
+            subproblem_count=get_teamwork_subproblem_count(problem_id, parsed_team_size),
         )
         session.add(config)
         _sync_team_rows(session, problem_id, parsed_team_count, parsed_team_size)
@@ -303,7 +309,7 @@ def _save_teamwork_config(
             raise HTTPException(status_code=400, detail="team_size cannot be changed after teamwork is created")
 
     config.team_count = parsed_team_count
-    config.subproblem_count = config.team_size
+    config.subproblem_count = get_teamwork_subproblem_count(problem_id, config.team_size)
     config.updated_at = datetime.now(timezone.utc)
     _sync_team_rows(session, problem_id, config.team_count, config.team_size)
     session.commit()
@@ -638,6 +644,7 @@ def init_teamwork_teams(
         )
 
     # Reinitialize as an idempotent operation.
+    session.exec(delete(TeamTextSubmission).where(TeamTextSubmission.problem_id == problem_id))
     session.exec(delete(TeamSubmission).where(TeamSubmission.problem_id == problem_id))
     session.exec(delete(TeamAttempt).where(TeamAttempt.problem_id == problem_id))
     session.exec(delete(TeamSubproblemClaim).where(TeamSubproblemClaim.problem_id == problem_id))
@@ -678,6 +685,19 @@ def get_teamwork_overview(problem_id: str, session: Session = Depends(get_sessio
     config = session.exec(
         select(TeamWorkConfig).where(TeamWorkConfig.problem_id == problem_id)
     ).first()
+    # 直接放入题库的作业尚未上传配置时，按脚本默认分组初始化，管理端也能立即显示认领与成员信息。
+    if not config:
+        defaults = _extract_teamwork_meta(problem_id)
+        if defaults.get("team_count") and defaults.get("team_size"):
+            config, _ = _save_teamwork_config(session, problem_id, defaults["team_count"], defaults["team_size"])
+    # 已建立的文字作业也同步实际项目数量，不改动成员归属或删除提交。
+    script = load_problem_script(problem_id)
+    if config and is_team_text_meta(getattr(script, "meta", {})):
+        count = get_teamwork_subproblem_count(problem_id, config.team_size)
+        if config.subproblem_count != count:
+            config.subproblem_count = count
+            session.add(config)
+            session.commit()
     teams = session.exec(
         select(Team).where(Team.problem_id == problem_id).order_by(Team.team_no)
     ).all()
@@ -709,6 +729,9 @@ def get_teamwork_overview(problem_id: str, session: Session = Depends(get_sessio
     for m in members:
         members_by_team.setdefault(m.team_id, []).append(m)
 
+    # 文字作业在管理端展示是否提交与最后更新时间，不生成分数。
+    text_rows = session.exec(select(TeamTextSubmission).where(TeamTextSubmission.problem_id == problem_id)).all()
+    text_map = {(row.team_id, row.student_id): row for row in text_rows}
     team_items = []
     for t in teams:
         team_members = members_by_team.get(t.id, [])
@@ -719,7 +742,8 @@ def get_teamwork_overview(problem_id: str, session: Session = Depends(get_sessio
                 "name": student_name_map.get(m.student_id, ""),
                 "joined_at": m.joined_at,
                 "claimed_subproblem": claims_map.get((t.id, m.student_id)),
-                "pdf_path": submission_map.get(m.student_id)
+                "pdf_path": submission_map.get(m.student_id),
+                "text_submitted": (t.id, m.student_id) in text_map,
             })
 
         team_items.append({
@@ -729,6 +753,9 @@ def get_teamwork_overview(problem_id: str, session: Session = Depends(get_sessio
             "max_members": t.max_members,
             "member_count": len(member_rows),
             "members": member_rows,
+            "text_submitted": bool(team_members) and all((t.id, member.student_id) in text_map for member in team_members),
+            "text_submission_count": sum((t.id, member.student_id) in text_map for member in team_members),
+            "text_updated_at": max((row.updated_at for row in text_rows if row.team_id == t.id), default=None),
         })
 
     return {
@@ -802,6 +829,7 @@ def update_student(student_id: str, update: StudentUpdate, session: Session = De
             # 删除作答和提交记录，确保离队后其分数不再算入原队伍总分
             session.exec(delete(TeamAttempt).where(TeamAttempt.student_id == student_id))
             session.exec(delete(TeamSubmission).where(TeamSubmission.student_id == student_id))
+            session.exec(delete(TeamTextSubmission).where(TeamTextSubmission.student_id == student_id))
             session.exec(delete(Attempt).where(Attempt.student_id == student_id))
             
             # 查找并删除此人的个人 PDF 作业文件（按需清理文件以防止残留，或者仅清数据依赖实际情况，这里清理数据库关联记录）
@@ -832,6 +860,7 @@ def delete_student(student_id: str, session: Session = Depends(get_session)):
     # 删除作答和提交记录，确保离队后其分数不再算入原队伍总分
     session.exec(delete(TeamAttempt).where(TeamAttempt.student_id == student_id))
     session.exec(delete(TeamSubmission).where(TeamSubmission.student_id == student_id))
+    session.exec(delete(TeamTextSubmission).where(TeamTextSubmission.student_id == student_id))
     session.exec(delete(Attempt).where(Attempt.student_id == student_id))
     session.exec(delete(ProblemSubmission).where(ProblemSubmission.student_id == student_id))
     
@@ -854,7 +883,7 @@ def permanently_delete_student(student_id: str, session: Session = Depends(get_s
         raise HTTPException(status_code=400, detail='请先将学生移入回收站')
 
     # 在同一事务中清除关联数据及账号，避免重新使用学号时继承旧记录。
-    for model in (TeamMember, TeamSubproblemClaim, TeamAttempt, TeamSubmission, Attempt, ProblemSubmission):
+    for model in (TeamMember, TeamSubproblemClaim, TeamAttempt, TeamSubmission, TeamTextSubmission, Attempt, ProblemSubmission):
         session.exec(delete(model).where(model.student_id == student_id))
     session.delete(student)
     session.commit()
@@ -1124,6 +1153,13 @@ def get_admin_problem_content(
     content = get_problem_content_and_status(session, problem_id, render_student_id, team_id=team_id)
 
     if isinstance(content, dict):
+        if is_team_text_meta(content.get("meta", {})):
+            # 返回所选小组各认领者的独立作答，前端按区域展示并定位所选学生。
+            report_team_id = team_id
+            if report_team_id is None and render_student_id:
+                member = session.exec(select(TeamMember).where(TeamMember.problem_id == problem_id, TeamMember.student_id == render_student_id)).first()
+                report_team_id = member.team_id if member else None
+            content["text_submissions"] = get_team_text_submissions(session, problem_id, report_team_id)
         if teamwork_config:
             if team_id is not None:
                 meta = content.get("meta", {}) if isinstance(content.get("meta"), dict) else {}

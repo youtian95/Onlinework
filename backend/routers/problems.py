@@ -1,8 +1,10 @@
+# 学生题目接口：鉴权后读取题面、管理分组、提交答案或文字报告；输入请求和会话，输出题目及提交状态。
 from fastapi import APIRouter, HTTPException, Depends, Header, UploadFile, File, Query
 from fastapi.responses import FileResponse
 from sqlmodel import Session, select, delete
 from typing import Dict, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from backend.services.team_text import is_team_text_meta, get_team_text_submission, get_team_text_submissions, save_team_text_submission
 from datetime import datetime, timezone
 import os
 import re
@@ -22,6 +24,7 @@ from backend.models import (
     TeamSubproblemClaim,
     TeamAttempt,
     TeamSubmission,
+    TeamTextSubmission,
 )
 from backend.utils import get_stable_rng
 from backend.core.security import verify_token
@@ -32,6 +35,7 @@ from backend.services.problems import (
     require_student, 
     get_problem_content_and_status, 
     get_problem_subproblem_bundle,
+    get_teamwork_subproblem_count,
     PROBLEMS_DIR,
     build_attempt_status,
     get_problem_ranking,
@@ -141,6 +145,14 @@ class JoinTeamRequest(BaseModel):
     force_switch: bool = False
 
 
+class TeamTextRequest(BaseModel):
+    """文字提交请求：subproblem_no 为认领区域，content 为完整报告，revision 为加载时的版本号。"""
+
+    subproblem_no: int = Field(ge=1)
+    content: str = Field(min_length=1, max_length=100000)
+    revision: int = Field(default=0, ge=0)
+
+
 class ClaimSubproblemRequest(BaseModel):
     subproblem_no: int
     force_switch: bool = False
@@ -183,7 +195,7 @@ def _extract_teamwork_meta(problem_id: str) -> Optional[dict]:
     return {
         "team_count": team_count,
         "team_size": team_size,
-        "subproblem_count": team_size,
+        "subproblem_count": get_teamwork_subproblem_count(problem_id, team_size),
     }
 
 
@@ -195,6 +207,15 @@ def _ensure_teamwork_config(session: Session, problem_id: str) -> Optional[TeamW
         return None
 
     changed = False
+
+    # 文字作业的认领数量与模板中的项目一致，更新数量时保留现有队伍和成员。
+    script = load_problem_script(problem_id)
+    if config and is_team_text_meta(getattr(script, "meta", {})):
+        count = get_teamwork_subproblem_count(problem_id, config.team_size)
+        if config.subproblem_count != count:
+            config.subproblem_count = count
+            session.add(config)
+            changed = True
 
     if not config and meta_teamwork:
         config = TeamWorkConfig(
@@ -341,6 +362,8 @@ def _build_teamwork_attempt_status(
 
 
 def _clear_student_claim_records(session: Session, problem_id: str, student_id: str):
+    # 换组或换认领时，沿用原机制清理该学生的独立文字作答。
+    session.exec(delete(TeamTextSubmission).where(TeamTextSubmission.problem_id == problem_id, TeamTextSubmission.student_id == student_id))
     old_submissions = session.exec(
         select(ProblemSubmission).where(
             ProblemSubmission.problem_id == problem_id,
@@ -549,6 +572,7 @@ def list_problems(
             item = {
                 "id": name,
                 "title": script.meta.get("title", name),
+                "submission_mode": script.meta.get("submission_mode"),
                 "is_terminated": is_terminated,
                 "deadline": deadline,
                 "teamwork_enabled": bool(teamwork_config),
@@ -558,9 +582,11 @@ def list_problems(
             }
 
             # 游客模式下不返回得分信息
-            if student_id:
+            if student_id and not is_team_text_meta(meta):
                 item["total_score"] = total_score
                 item["obtained_score"] = obtained_score
+            elif student_id and name in member_by_problem:
+                item["text_submitted"] = bool(get_team_text_submission(session, name, member_by_problem[name].team_id, student_id)["revision"])
 
             problems.append(item)
     return problems
@@ -624,6 +650,9 @@ def get_problem(
                 )
             ).first()
 
+        if teamwork_config and student_id and team_member and is_team_text_meta(content.get("meta", {})):
+            # 返回组内独立作答供查看，写入时仍只允许编辑本人认领区域。
+            content["text_submissions"] = get_team_text_submissions(session, problem_id, team_member.team_id)
         if teamwork_config and student_id and team_member:
             input_ids = content.get("input_ids", [])
             raw_meta = content.get("meta", {}) if isinstance(content.get("meta"), dict) else {}
@@ -766,6 +795,27 @@ def get_problem_teams(
     }
 
 
+@router.put("/{problem_id}/team/text")
+def submit_team_text(problem_id: str, payload: TeamTextRequest, current_student: Student = Depends(get_current_student), session: Session = Depends(get_session)):
+    """提交分组文字作业；problem_id 为题目编号，payload 为报告和版本，current_student 为登录学生，session 为数据库会话。"""
+    script = load_problem_script(problem_id)
+    if not script or not is_team_text_meta(getattr(script, "meta", {})):
+        raise HTTPException(status_code=400, detail="当前题目不是分组文字作业")
+    state = session.exec(select(ProblemState).where(ProblemState.problem_id == problem_id)).first()
+    if not _has_problem_access(state, current_student.student_id):
+        raise HTTPException(status_code=403, detail="Problem not available")
+    if state.deadline and datetime.now(timezone.utc) > state.deadline.replace(tzinfo=timezone.utc):
+        raise HTTPException(status_code=400, detail="作业已截止，无法提交")
+    member = _get_student_team_member(session, problem_id, current_student.student_id)
+    if not member:
+        raise HTTPException(status_code=403, detail="请先加入队伍")
+    claim = _get_student_claim(session, problem_id, member.team_id, current_student.student_id)
+    if not claim or claim.subproblem_no != payload.subproblem_no:
+        raise HTTPException(status_code=403, detail="只能提交本人认领区域的文字内容，请先认领该区域")
+    # 不执行判题器，不增加答题次数或生成分数。
+    return {"text_submission": save_team_text_submission(session, problem_id, member.team_id, current_student.student_id, claim.subproblem_no, payload.content, payload.revision)}
+
+
 @router.post("/{problem_id}/team/join")
 def join_team(
     problem_id: str,
@@ -823,6 +873,8 @@ def join_team(
     if existing:
         _clear_student_teamwork_records(session, problem_id, current_student.student_id)
         session.delete(existing)
+        # 先释放原成员记录的唯一键，再创建新队伍成员记录。
+        session.flush()
         data_cleared = True
 
     new_member = TeamMember(
@@ -1127,6 +1179,8 @@ def submit_answer(req: SubmitRequest, session: Session):
     script = load_problem_script(req.problem_id)
     if not script:
         raise HTTPException(status_code=404, detail="Problem not found")
+    if is_team_text_meta(getattr(script, "meta", {})):
+        raise HTTPException(status_code=400, detail="文字作业请使用文字报告提交入口，不进行答案批改")
 
     # 2. 重新生成参数
     # 游客使用固定种子
