@@ -60,7 +60,7 @@
         <!-- 在队伍信息与题目标题之间提示逐空提交方式。 -->
         <div v-if="!isTextAssignment" class="answer-submit-hint">
           <span class="answer-submit-icon" aria-hidden="true">💡</span>
-          <strong>按回车逐个提交每个空的答案</strong>
+          <strong>按回车或 Tab 逐个提交每个空的答案</strong>
         </div>
         <ProblemSheet
           ref="problemSheetRef"
@@ -265,15 +265,15 @@ const showProblemBody = computed(() => !teamworkEnabled.value || !token || teamJ
 
 const hintText = computed(() => {
   if (!token) {
-    return '提示：游客模式下按 Enter 可以即时校验，但不会保存团队状态。'
+    return '提示：游客模式下按 Enter 或 Tab 可以即时校验，但不会保存团队状态。'
   }
   if (teamworkEnabled.value && !myClaimSubproblem.value) {
-    return '提示：先认领一个子问题，再在自己负责的区域内按 Enter 提交单个输入框。'
+    return '提示：先认领一个子问题，再在自己负责的区域内按 Enter 或 Tab 提交单个输入框。'
   }
   if (teamworkEnabled.value) {
     return '提示：PDF中写自己负责的子题目的计算过程。'
   }
-  return '提示：输入答案后按 Enter 键提交单个输入框。'
+  return '提示：输入答案后按 Enter 或 Tab 键提交单个输入框。'
 })
 
 const formatTime = (iso) => (iso ? new Date(iso).toLocaleString() : '-')
@@ -712,7 +712,7 @@ const bindInputsInContainer = (container) => {
 }
 
 const getInputPlaceholder = (status) => {
-  if (!token) return '按回车验证'
+  if (!token) return '回车或Tab验证'
   if (isTerminated.value) return '已截止'
   if (teamworkEnabled.value) {
     if (!status.owner_student_id) return '未认领'
@@ -778,7 +778,7 @@ const processPlaceholder = (placeholder, id) => {
   }
 
   input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' || event.key === 'Tab') {
       submitSingleAnswer(id)
     }
   })
@@ -969,6 +969,7 @@ const submitSingleAnswer = async (inputId) => {
   align-items: center;
   margin: 3px 3px;
 }
+
 
 .attempt-info {
   position: absolute;
