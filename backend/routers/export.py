@@ -820,12 +820,17 @@ def export_scores(session: Session = Depends(get_session), token: str = Query(..
         if not p_meta or not p_meta.get("is_teamwork"):
             continue
 
+        # 只给当前题面中的填空计分，跳过已删除填空的历史记录。
+        input_scores = p_meta["input_scores"]
+        if a.input_id not in input_scores:
+            continue
+
         key = (a.problem_id, a.team_id, a.input_id)
         if key in team_seen_inputs:
             continue
         team_seen_inputs.add(key)
 
-        score = p_meta.get("input_scores", {}).get(a.input_id, DEFAULT_INPUT_SCORE)
+        score = input_scores[a.input_id]
         team_score_map[(a.problem_id, a.team_id)] = team_score_map.get((a.problem_id, a.team_id), 0) + score
 
     # 团队题在提交时使用 student_id 作为随机种子的一部分，

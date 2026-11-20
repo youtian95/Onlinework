@@ -577,9 +577,8 @@ def get_problem_ranking(session: Session, problem_id: str):
     if not script or not hasattr(script, "meta"):
         return []
     
-    meta = ensure_meta_inputs(script.meta)
-    meta_inputs = meta.get("inputs", {})
-    
+    _, input_scores, _ = _get_input_score_map(problem_id, script)
+
     attempts = session.exec(
         select(Attempt).where(Attempt.problem_id == problem_id)
     ).all()
@@ -587,6 +586,9 @@ def get_problem_ranking(session: Session, problem_id: str):
     student_stats = {}
     
     for a in attempts:
+        # 已删除的填空只保留历史记录，不参与排名。
+        if a.input_id not in input_scores:
+            continue
         current_update = _ensure_utc_datetime(a.updated_at)
         if a.student_id not in student_stats:
             student_stats[a.student_id] = {
@@ -600,9 +602,7 @@ def get_problem_ranking(session: Session, problem_id: str):
                 student_stats[a.student_id]["last_update"] = current_update
             
         if a.correct:
-            input_conf = meta_inputs.get(a.input_id, {})
-            score = input_conf.get("score", DEFAULT_INPUT_SCORE)
-            student_stats[a.student_id]["score"] += score
+            student_stats[a.student_id]["score"] += input_scores[a.input_id]
             
     # Fetch student names
     student_ids = list(student_stats.keys())
@@ -761,21 +761,18 @@ def get_teamwork_personal_ranking(session: Session, problem_id: str):
         if sid not in stats:
             continue
 
+        # 有效填空及其认领关系同时约束得分和同分排序时间。
+        expected_sub = claim_by_student.get(sid)
+        if expected_sub is None or input_sub_map.get(a.input_id) != expected_sub or a.input_id not in input_scores:
+            continue
+
         current_update = _ensure_utc_datetime(a.updated_at)
         current_last = stats[sid]["last_update"]
         if current_update is not None and (current_last is None or current_update > current_last):
             stats[sid]["last_update"] = current_update
 
-        if not a.correct:
-            continue
-
-        expected_sub = claim_by_student.get(sid)
-        if expected_sub is None:
-            continue
-        if input_sub_map.get(a.input_id) != expected_sub:
-            continue
-
-        stats[sid]["score"] += input_scores.get(a.input_id, DEFAULT_INPUT_SCORE)
+        if a.correct:
+            stats[sid]["score"] += input_scores[a.input_id]
 
     ranking_list = []
     submissions = session.exec(select(ProblemSubmission).where(
@@ -868,7 +865,7 @@ def get_teamwork_team_ranking(session: Session, problem_id: str):
     }
 
     for a in attempts:
-        if a.team_id not in stats:
+        if a.team_id not in stats or a.input_id not in input_scores:
             continue
 
         current_update = _ensure_utc_datetime(a.updated_at)
@@ -878,13 +875,11 @@ def get_teamwork_team_ranking(session: Session, problem_id: str):
 
         if not a.correct:
             continue
-        if a.input_id not in input_scores:
-            continue
 
         if a.input_id in stats[a.team_id]["counted_inputs"]:
             continue
         stats[a.team_id]["counted_inputs"].add(a.input_id)
-        stats[a.team_id]["score"] += input_scores.get(a.input_id, DEFAULT_INPUT_SCORE)
+        stats[a.team_id]["score"] += input_scores[a.input_id]
 
     ranking_list = []
     for t in teams:
@@ -1041,14 +1036,15 @@ def get_total_ranking(session: Session):
 
     for a in attempts:
         if a.student_id in student_stats:
+            score_key = (a.problem_id, a.input_id)
+            if score_key not in problem_scores:
+                continue
             stats = student_stats[a.student_id]
             current_update = _ensure_utc_datetime(a.updated_at)
             if current_update is not None and (stats["last_update"] is None or current_update > stats["last_update"]):
                 stats["last_update"] = current_update
             if a.correct:
-                if (a.problem_id, a.input_id) in problem_scores:
-                    score = problem_scores[(a.problem_id, a.input_id)]
-                    stats["score"] += score
+                stats["score"] += problem_scores[score_key]
 
     # 4.1 统计团队题提交记录
     team_attempts = []
@@ -1059,20 +1055,17 @@ def get_total_ranking(session: Session):
 
     for a in team_attempts:
         if a.student_id in student_stats:
+            score_key = (a.problem_id, a.input_id)
+            claimed_sub = claim_map.get((a.problem_id, a.student_id))
+            input_sub_map = teamwork_input_sub_map.get(a.problem_id, {})
+            if score_key not in problem_scores or claimed_sub is None or input_sub_map.get(a.input_id) != claimed_sub:
+                continue
             stats = student_stats[a.student_id]
             current_update = _ensure_utc_datetime(a.updated_at)
             if current_update is not None and (stats["last_update"] is None or current_update > stats["last_update"]):
                 stats["last_update"] = current_update
             if a.correct:
-                claimed_sub = claim_map.get((a.problem_id, a.student_id))
-                if claimed_sub is None:
-                    continue
-                input_sub_map = teamwork_input_sub_map.get(a.problem_id, {})
-                if input_sub_map.get(a.input_id) != claimed_sub:
-                    continue
-                if (a.problem_id, a.input_id) in problem_scores:
-                    score = problem_scores[(a.problem_id, a.input_id)]
-                    stats["score"] += score
+                stats["score"] += problem_scores[score_key]
             
     # 5. 生成排名列表
     ranking_list = []
